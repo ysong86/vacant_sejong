@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>행복도시 상가공실 3D</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0e1116;--panel:rgba(20,24,31,.92);--line:#2a313c;--ink:#e8ebf0;--mute:#9aa3af;--acc:#f0a23b}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:"Noto Sans KR",system-ui,sans-serif}
+#map{position:absolute;inset:0}
+.panel{position:absolute;top:12px;left:12px;width:320px;max-height:calc(100% - 24px);overflow:auto;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;padding:14px 14px 10px;backdrop-filter:blur(6px);font-size:13px}
+h1{font-size:17px;margin:0 0 2px}
+.sub{color:var(--mute);font-size:12px;margin-bottom:10px}
+.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0 12px}
+.kpi div{background:#161b23;border:1px solid var(--line);border-radius:8px;padding:7px 8px}
+.kpi b{display:block;font-size:17px}
+.kpi span{color:var(--mute);font-size:11px}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.seg button{background:#161b23;color:var(--ink);border:1px solid var(--line);padding:4px 9px;border-radius:6px;cursor:pointer;font:inherit;font-size:12px}
+.seg button.on{background:var(--acc);color:#111;border-color:var(--acc);font-weight:700}
+label.t{color:var(--mute);font-size:12px;display:block;margin-top:10px}
+.legend{margin:8px 0 4px}
+.bar{height:10px;border-radius:5px;background:linear-gradient(90deg,#2b83ba,#abdda4,#ffffbf,#fdae61,#d7191c)}
+.ticks{display:flex;justify-content:space-between;color:var(--mute);font-size:11px;margin-top:2px}
+.dong{width:100%;border-collapse:collapse;margin-top:6px}
+.dong td{padding:3px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+.dong tr:hover td{background:#1c222c}
+.dong td.r{text-align:right;font-variant-numeric:tabular-nums}
+.mini{display:inline-block;height:6px;border-radius:3px;vertical-align:middle}
+.note{color:var(--mute);font-size:11px;line-height:1.5;margin-top:10px}
+.maplibregl-popup-content{background:#14181f;color:var(--ink);border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:12.5px;padding:10px 12px}
+.maplibregl-popup-tip{border-top-color:#14181f!important;border-bottom-color:#14181f!important}
+.pp b{font-size:14px}.pp .m{color:var(--mute)}.pp table{border-collapse:collapse;margin-top:4px}.pp td{padding:1px 8px 1px 0}
+#toggle{display:none}
+@media (max-width:640px){
+  .panel{left:8px;right:8px;width:auto;top:auto;bottom:8px;max-height:45%}
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel" id="panel">
+  <h1>행복도시 상가공실 3D</h1>
+  <div class="sub">행정중심복합도시 건축물 · 상가 전수조사 건물만 색칠</div>
+  <div class="kpi" id="kpi"></div>
+  <label class="t">공실률 기준</label>
+  <div class="row seg" id="basis"><button data-v="rate" class="on">면적</button><button data-v="ru">호수</button></div>
+  <label class="t">높이</label>
+  <div class="row seg" id="hmode"><button data-v="real" class="on">실제 높이</button><button data-v="vac">공실률 강조</button></div>
+  <label class="t">조사연도</label>
+  <div class="row seg" id="year"><button data-v="all" class="on">전체</button></div>
+  <label class="t">생활권</label>
+  <div class="row seg" id="zone"><button data-v="all" class="on">전체</button></div>
+  <div class="legend"><div class="bar"></div><div class="ticks"><span>0%</span><span>10</span><span>20</span><span>30</span><span>40%+</span></div></div>
+  <div class="row seg" id="ctx"><button data-v="on" class="on">일반 건물 표시</button><button data-v="off">숨김</button></div>
+  <label class="t">동별 공실률(면적 가중) · 누르면 이동</label>
+  <table class="dong" id="dong"></table>
+  <div class="note" id="note"></div>
+</div>
+<script>
+const DATA=/*__DATA__*/null;
+const S=DATA.survey, byNo=Object.fromEntries(S.map(s=>[s.no,s]));
+const STOPS=[0,'#2b83ba',10,'#abdda4',20,'#ffffbf',30,'#fdae61',40,'#d7191c'];
+const col=v=>{const c=STOPS;if(v==null)return'#888';for(let i=2;i<c.length;i+=2){if(v<=c[i]){const t=(v-c[i-2])/(c[i]-c[i-2]);return mix(c[i-1],c[i+1],t)}}return c[c.length-1]};
+function mix(a,b,t){const p=x=>[1,3,5].map(i=>parseInt(x.substr(i,2),16));const A=p(a),B=p(b);return'#'+A.map((v,i)=>Math.round(v+(B[i]-v)*t).toString(16).padStart(2,'0')).join('')}
+const st={basis:'rate',hmode:'real',year:'all',zone:'all',ctx:'on'};
+
+// 조사 건물 값을 외곽선에 복사
+const fp=DATA.footprints;
+fp.features.forEach((f,i)=>{f.id=i;const s=byNo[f.properties.sv];if(s){Object.assign(f.properties,{rate:s.rate,ru:s.ru??-1,yr:s.survey,zn:s.zone})}});
+const svFeat={type:'FeatureCollection',features:fp.features.filter(f=>f.properties.sv)};
+const ctxFeat={type:'FeatureCollection',features:fp.features.filter(f=>!f.properties.sv)};
+// 외곽선에 못 붙은 조사 건물은 작은 기둥으로
+const orphan={type:'FeatureCollection',features:S.filter(s=>s.h==null).map(s=>{const d=0.00012;return{type:'Feature',properties:{sv:s.no,h:12,rate:s.rate,ru:s.ru??-1,yr:s.survey,zn:s.zone},geometry:{type:'Polygon',coordinates:[[[s.lon-d,s.lat-d],[s.lon+d,s.lat-d],[s.lon+d,s.lat+d],[s.lon-d,s.lat+d],[s.lon-d,s.lat-d]]]}}})};
+svFeat.features.push(...orphan.features);
+
+// 행복도시 밖 어둡게: 세계 사각형에서 생활권 구멍
+const mask={type:'Feature',geometry:{type:'Polygon',coordinates:[[[120,30],[135,30],[135,42],[120,42],[120,30]],...DATA.zones.flatMap(z=>z.rings)]}};
+const zoneLines={type:'FeatureCollection',features:DATA.zones.map(z=>({type:'Feature',properties:{id:z.id,name:z.name},geometry:{type:'Polygon',coordinates:z.rings}}))};
+
+const map=new maplibregl.Map({container:'map',style:'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  center:[127.268,36.497],zoom:13.6,pitch:60,bearing:-20,maxPitch:80,antialias:true});
+map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),'top-right');
+map.addControl(new maplibregl.ScaleControl(),'bottom-right');
+
+function colorExpr(){const k=st.basis;return['case',['<',['get',k],0],'#666',['interpolate',['linear'],['get',k],...STOPS]]}
+function heightExpr(){return st.hmode==='real'?['max',['get','h'],3]:['+',['max',['get','h'],3],['*',['max',['get',st.basis],0],4]]}
+function filterExpr(){const f=['all'];if(st.year!=='all')f.push(['==',['get','yr'],st.year]);if(st.zone!=='all')f.push(['==',['get','zn'],st.zone]);return f}
+
+map.on('load',()=>{
+  // 기본도 라벨은 흐리게
+  map.getStyle().layers.forEach(l=>{if(l.type==='symbol'&&l.paint)try{map.setPaintProperty(l.id,'text-opacity',0.55)}catch(e){}});
+  map.addSource('mask',{type:'geojson',data:mask});
+  map.addLayer({id:'mask',type:'fill',source:'mask',paint:{'fill-color':'#000','fill-opacity':0.55}});
+  map.addSource('zones',{type:'geojson',data:zoneLines});
+  map.addLayer({id:'zone-line',type:'line',source:'zones',paint:{'line-color':'#f0a23b','line-width':1.4,'line-opacity':0.7,'line-dasharray':[2,1.5]}});
+  map.addSource('ctx',{type:'geojson',data:ctxFeat});
+  map.addLayer({id:'ctx',type:'fill-extrusion',source:'ctx',paint:{'fill-extrusion-color':'#5b6575','fill-extrusion-height':['get','h'],'fill-extrusion-opacity':0.55}});
+  map.addSource('sv',{type:'geojson',data:svFeat});
+  map.addLayer({id:'sv',type:'fill-extrusion',source:'sv',paint:{'fill-extrusion-color':colorExpr(),'fill-extrusion-height':heightExpr(),'fill-extrusion-opacity':0.95,'fill-extrusion-vertical-gradient':true}});
+  map.addSource('zlab',{type:'geojson',data:{type:'FeatureCollection',features:DATA.zones.map(z=>({type:'Feature',properties:{name:z.name},geometry:{type:'Point',coordinates:z.lab}}))}});
+  map.addLayer({id:'zone-lab',type:'symbol',source:'zlab',layout:{'text-field':['get','name'],'text-size':13,'text-font':['Open Sans Bold','Arial Unicode MS Bold']},paint:{'text-color':'#f0a23b','text-halo-color':'#000','text-halo-width':1.2}});
+  map.on('mousemove','sv',()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave','sv',()=>map.getCanvas().style.cursor='');
+  map.on('click','sv',e=>{const s=byNo[e.features[0].properties.sv];if(!s)return;
+    new maplibregl.Popup({maxWidth:'300px'}).setLngLat(e.lngLat).setHTML(`<div class="pp"><b>${s.name}</b><div class="m">${s.dong} · ${s.sub} · ${s.addr}</div>
+    <table><tr><td class="m">공실률(면적)</td><td><b style="color:${col(s.rate)}">${s.rate}%</b></td></tr>
+    <tr><td class="m">공실률(호수)</td><td>${s.ru??'-'}% (${s.vu}/${s.units}호)</td></tr>
+    <tr><td class="m">상가 면적</td><td>${s.area.toLocaleString()}㎡ 중 공실 ${s.vac.toLocaleString()}㎡</td></tr>
+    <tr><td class="m">용도</td><td>${s.use}</td></tr>
+    <tr><td class="m">경과연수</td><td>${s.age??'-'}년</td></tr>
+    <tr><td class="m">조사</td><td>${s.survey}년</td></tr></table></div>`).addTo(map)});
+  render();
+  fitTo(S);
+});
+const pad=()=>({top:60,bottom:60,left:window.innerWidth>640?360:30,right:60});
+function fitTo(a,maxZoom=15.5){const xs=a.map(s=>s.lon),ys=a.map(s=>s.lat);
+  map.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:pad(),pitch:60,bearing:-20,maxZoom,duration:1200})}
+
+function seg(id,opts){const el=document.getElementById(id);opts&&opts.forEach(([v,t])=>{const b=document.createElement('button');b.dataset.v=v;b.textContent=t;el.appendChild(b)});
+  el.onclick=e=>{const b=e.target.closest('button');if(!b)return;el.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));st[id]=b.dataset.v;render()}}
+seg('basis');seg('hmode');seg('ctx');
+seg('year',[...new Set(S.map(s=>s.survey))].sort().map(y=>[y,y+'년']));
+seg('zone',[...new Set(S.map(s=>s.zone).filter(Boolean))].sort().map(z=>[z,z+'생활권']));
+
+function sel(){return S.filter(s=>(st.year==='all'||s.survey===st.year)&&(st.zone==='all'||s.zone===st.zone))}
+function rateOf(g){if(st.basis==='rate'){const a=g.reduce((x,s)=>x+s.area,0);return a?g.reduce((x,s)=>x+s.vac,0)/a*100:null}
+  const u=g.reduce((x,s)=>x+s.units,0);return u?g.reduce((x,s)=>x+s.vu,0)/u*100:null}
+function render(){
+  if(map.getLayer('sv')){map.setPaintProperty('sv','fill-extrusion-color',colorExpr());map.setPaintProperty('sv','fill-extrusion-height',heightExpr());map.setFilter('sv',filterExpr());
+    map.setLayoutProperty('ctx','visibility',st.ctx==='on'?'visible':'none')}
+  const g=sel(),r=rateOf(g);
+  document.getElementById('kpi').innerHTML=`<div><b>${g.length}</b><span>조사 건물</span></div><div><b style="color:${col(r)}">${r==null?'-':r.toFixed(1)}%</b><span>공실률(${st.basis==='rate'?'면적':'호수'})</span></div><div><b>${g.reduce((x,s)=>x+s.vu,0).toLocaleString()}</b><span>공실 호수</span></div>`;
+  const D={};g.forEach(s=>(D[s.dong]=D[s.dong]||[]).push(s));
+  const rows=Object.entries(D).map(([d,a])=>[d,rateOf(a),a]).sort((a,b)=>b[1]-a[1]);
+  document.getElementById('dong').innerHTML=rows.map(([d,v,a])=>`<tr data-d="${d}"><td>${d}</td><td class="r">${a.length}동</td><td><span class="mini" style="width:${Math.min(v,50)*1.6}px;background:${col(v)}"></span></td><td class="r"><b>${v.toFixed(1)}%</b></td></tr>`).join('');
+  document.querySelectorAll('#dong tr').forEach(tr=>tr.onclick=()=>fitTo(D[tr.dataset.d],17));
+}
+const nOrph=S.filter(s=>s.h==null).length;
+document.getElementById('note').innerHTML=`건물 외곽선·높이: 브이월드 GIS건물통합정보(높이 없으면 지상층수×3.3m). 일반 건물 ${ctxFeat.features.length.toLocaleString()}동.<br>
+공실: 상가 전수조사 ${S.length}동(${[...new Set(S.map(s=>s.survey))].sort().join('·')}년). 공실률은 공실면적÷상가면적.${nOrph?` 외곽선을 못 찾은 ${nOrph}동은 좌표에 작은 기둥으로 표시.`:''}<br>
+'공실률 강조'는 공실률 1%p당 4m를 실제 높이에 더한다. 끌어서 이동, 오른쪽 버튼(Ctrl+끌기)으로 회전·기울이기.`;
+</script>
+</body>
+</html>

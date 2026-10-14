@@ -1,0 +1,265 @@
+<!-- 3D 지도 조각 — build.py 가 body.html 의 자료 스크립트 앞에 끼운다. '공실 지도' 머리에 2D/3D 전환을 달고,
+     3D 를 처음 누를 때 MapLibre 를 불러온다(2D 만 보는 사람은 외부 요청 없음). 자료는 make_map.py → data/map3d.json -->
+<style>
+.v3-toggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin-left:10px;vertical-align:middle}
+.v3-toggle button{border:0;background:var(--panel);color:var(--ink2);padding:4px 14px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.v3-toggle button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+#v3{display:none;grid-template-columns:250px minmax(0,1fr);gap:14px;align-items:start}
+#v3.on{display:grid}
+#v3 .rail h4{margin:12px 0 6px;font-size:12.5px}
+#v3 .rail h4:first-child{margin-top:0}
+#v3-map{height:640px;position:relative}
+#v3-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--ink3);font-size:13px}
+#v3 .v3-leg{display:flex;gap:2px;margin-top:4px}
+#v3 .v3-leg span{flex:1;height:9px}
+#v3 .v3-tk{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink3);font-family:var(--mono)}
+#v3 .note{font-size:11.5px;color:var(--ink3);line-height:1.55;margin-top:12px}
+#v3 .maplibregl-popup-content{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;font-family:var(--sans);font-size:12.5px;padding:10px 12px}
+#v3 .maplibregl-popup-tip{border-top-color:var(--panel)!important;border-bottom-color:var(--panel)!important}
+#v3 .pp b{font-size:14px} #v3 .pp .m{color:var(--ink3)} #v3 .pp td{padding:1px 8px 1px 0}
+/* 보는 방향 조작판 — 나침반 아이콘 대신 글자로 */
+.v3-pad{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;box-shadow:0 2px 10px rgba(0,0,0,.18);
+  font-family:var(--sans);color:var(--ink);width:228px;user-select:none;-webkit-user-select:none}
+.v3-pad .pt{font-size:12px;font-weight:700;margin:0 0 6px;display:flex;justify-content:space-between;align-items:baseline}
+.v3-pad .pt span{font-weight:400;color:var(--ink3);font-size:11px;font-family:var(--mono)}
+.v3-pad .grid{display:grid;grid-template-columns:1fr 52px 1fr;grid-template-rows:auto 52px auto;gap:4px;align-items:stretch}
+.v3-pad button{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:7px;font:inherit;font-size:11.5px;
+  line-height:1.2;padding:5px 3px;cursor:pointer;touch-action:none;word-break:keep-all}
+.v3-pad button:hover{border-color:var(--ink3);background:var(--line2)}
+.v3-pad button:active{transform:translateY(1px)}
+.v3-pad button b{display:block;font-size:16px;line-height:1}
+.v3-pad .up{grid-column:2;grid-row:1}.v3-pad .lt{grid-column:1;grid-row:2}.v3-pad .rt{grid-column:3;grid-row:2}.v3-pad .dn{grid-column:2;grid-row:3}
+.v3-pad .nc{grid-column:2;grid-row:2;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center;position:relative}
+.v3-pad .nc svg{width:34px;height:34px;transition:transform .1s linear}
+.v3-pad .pre{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px}
+.v3-pad .pre button[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.v3-pad .hint{font-size:10.5px;color:var(--ink3);line-height:1.45;margin-top:6px}
+.v3-pad .fold{border:0;background:none;padding:0;color:var(--ink3);font-size:11px;cursor:pointer}
+.v3-pad.min .body{display:none}
+@media (max-width:900px){#v3.on{grid-template-columns:1fr}#v3-map{height:70vh}.v3-pad{width:206px}.v3-pad .hint{display:none}}
+</style>
+<script type="application/json" id="data3d">/*__DATA3D__*/null</script>
+<script>
+(function(){
+"use strict";
+const sec = document.getElementById("map-sec"); if (!sec) return;
+const bench = sec.querySelector(".bench"), h2 = sec.querySelector(".sec-h h2"), note = sec.querySelector(".sec-h .note");
+const note2d = note ? note.innerHTML : "";
+const NOTE3D = "행복도시 건축물을 실제 높이로 세우고, 전수조사 건물만 공실률 색으로 칠했습니다. 끌어서 이동, 오른쪽 버튼(또는 Ctrl+끌기)으로 회전·기울이기, 건물을 누르면 내용이 뜹니다.";
+const st = (k, d) => { try { const v = localStorage.getItem("vs:" + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
+const put = (k, v) => { try { localStorage.setItem("vs:" + k, JSON.stringify(v)); } catch (e) {} };
+
+h2.insertAdjacentHTML("beforeend", `<span class="v3-toggle" role="group" aria-label="지도 방식"><button type="button" data-v="2d">2D</button><button type="button" data-v="3d">3D</button></span>`);
+bench.insertAdjacentHTML("afterend", `<div id="v3">
+  <aside class="rail" id="v3-rail"></aside>
+  <div class="mapbox"><div class="maptools"><div class="maptitle">건물 3D · 공실률</div><div class="chips"><button class="chip" type="button" id="v3-home">행복도시 전체</button></div></div>
+    <div id="v3-map"><div id="v3-msg">3D 지도를 불러오는 중…</div></div></div>
+</div>`);
+const box = document.getElementById("v3");
+const tg = h2.querySelector(".v3-toggle");
+let mode = st("mapmode", "2d"), map = null;
+function setMode(m){
+  mode = m; put("mapmode", m);
+  tg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === m));
+  bench.style.display = m === "3d" ? "none" : "";
+  box.classList.toggle("on", m === "3d");
+  if (note) note.innerHTML = m === "3d" ? NOTE3D : note2d;
+  if (m === "3d") { if (!map) init(); else map.resize(); }
+}
+tg.addEventListener("click", e => { const b = e.target.closest("button"); if (b) setMode(b.dataset.v); });
+
+/* 색은 2D 지도와 같은 5단계 */
+const BR = [10, 20, 30, 40], CO = ["#2E7D4F", "#8DB86B", "#E5B94A", "#E07B39", "#B03A3A"];
+const col = v => v == null ? "#888" : CO[BR.filter(b => v >= b).length];
+const stepExpr = k => ["case", ["<", ["get", k], 0], "#888", ["step", ["get", k], CO[0], 10, CO[1], 20, CO[2], 30, CO[3], 40, CO[4]]];
+const o = {basis: st("v3basis", "rate"), hmode: st("v3h", "real"), ctx: st("v3ctx", true)};
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let D = null, byNo = {};
+
+function rail(){
+  const chip = (g, v, t, on) => `<button class="chip" type="button" data-g="${g}" data-v="${v}" aria-pressed="${on}">${t}</button>`;
+  document.getElementById("v3-rail").innerHTML =
+    `<h4>공실률 기준</h4><div class="chips">${chip("basis", "rate", "면적", o.basis === "rate")}${chip("basis", "ru", "호수", o.basis === "ru")}</div>
+     <h4>높이</h4><div class="chips">${chip("hmode", "real", "실제 높이", o.hmode === "real")}${chip("hmode", "vac", "공실률 강조", o.hmode === "vac")}</div>
+     <h4>일반 건물</h4><div class="chips">${chip("ctx", "1", "보이기", o.ctx)}${chip("ctx", "0", "숨기기", !o.ctx)}</div>
+     <h4>공실률</h4><div class="v3-leg">${CO.map(c => `<span style="background:${c}"></span>`).join("")}</div>
+     <div class="v3-tk"><span>0</span><span>10</span><span>20</span><span>30</span><span>40%+</span></div>
+     <div class="note">건물 외곽선·높이: 브이월드 GIS건물통합정보(높이가 없으면 지상층수×3.3m, 둘 다 없으면 4m). 행복도시 건물 ${D ? D.b.length.toLocaleString() : "—"}동 가운데 조사 건물 ${D ? D.s.length : "—"}동만 색칠.
+     '공실률 강조'는 공실률 1%p마다 4m를 더합니다. 배경지도 © CARTO, OpenStreetMap 기여자.</div>`;
+}
+document.getElementById("v3-rail").addEventListener("click", e => {
+  const b = e.target.closest("button[data-g]"); if (!b) return;
+  if (b.dataset.g === "basis") { o.basis = b.dataset.v; put("v3basis", o.basis); }
+  if (b.dataset.g === "hmode") { o.hmode = b.dataset.v; put("v3h", o.hmode); }
+  if (b.dataset.g === "ctx") { o.ctx = b.dataset.v === "1"; put("v3ctx", o.ctx); }
+  rail(); paint();
+});
+
+function decode(){
+  D = JSON.parse(document.getElementById("data3d").textContent);
+  D.s.forEach(s => byNo[s.no] = s);
+  const sv = [], ctx = [];
+  D.b.forEach(b => {
+    const rings = b.slice(2).map(f => { const r = []; for (let i = 0; i < f.length; i += 2) r.push([127 + f[i] / 1e5, 36 + f[i + 1] / 1e5]); return [r]; });
+    const p = {h: Math.max(b[0] / 10, 3)};
+    const s = byNo[b[1]];
+    if (s) Object.assign(p, {sv: s.no, rate: s.rate, ru: s.ru == null ? -1 : s.ru});
+    (s ? sv : ctx).push({type: "Feature", properties: p, geometry: {type: "MultiPolygon", coordinates: rings}});
+  });
+  return {sv: {type: "FeatureCollection", features: sv}, ctx: {type: "FeatureCollection", features: ctx}};
+}
+function dark(){ return (document.documentElement.getAttribute("data-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark"; }
+const STYLE = () => `https://basemaps.cartocdn.com/gl/${dark() ? "dark-matter" : "positron"}-gl-style/style.json`;
+function load(src, css){
+  return new Promise((ok, no) => {
+    if (css) { const l = document.createElement("link"); l.rel = "stylesheet"; l.href = css; document.head.appendChild(l); }
+    const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s);
+  });
+}
+let FC = null;
+function heightExpr(){ return o.hmode === "real" ? ["get", "h"] : ["+", ["get", "h"], ["*", ["max", ["get", o.basis], 0], 4]]; }
+function paint(){
+  if (!map || !map.getLayer("v3-sv")) return;
+  map.setPaintProperty("v3-sv", "fill-extrusion-color", stepExpr(o.basis));
+  map.setPaintProperty("v3-sv", "fill-extrusion-height", heightExpr());
+  map.setLayoutProperty("v3-ctx", "visibility", o.ctx ? "visible" : "none");
+}
+function layers(){
+  const dk = dark();
+  map.getStyle().layers.forEach(l => { if (l.type === "symbol") try { map.setPaintProperty(l.id, "text-opacity", .6); } catch (e) {} });
+  const world = [[120, 30], [135, 30], [135, 42], [120, 42], [120, 30]];
+  map.addSource("v3-mask", {type: "geojson", data: {type: "Feature", geometry: {type: "Polygon", coordinates: [world, ...D.z.flatMap(z => z.rings)]}}});
+  map.addLayer({id: "v3-mask", type: "fill", source: "v3-mask", paint: {"fill-color": dk ? "#000" : "#fff", "fill-opacity": dk ? .5 : .55}});
+  map.addSource("v3-z", {type: "geojson", data: {type: "FeatureCollection", features: D.z.map(z => ({type: "Feature", properties: {}, geometry: {type: "Polygon", coordinates: z.rings}}))}});
+  map.addLayer({id: "v3-zl", type: "line", source: "v3-z", paint: {"line-color": dk ? "#74B8D6" : "#1D5C7C", "line-width": 1.4, "line-opacity": .75, "line-dasharray": [2, 1.5]}});
+  map.addSource("v3-ctx", {type: "geojson", data: FC.ctx});
+  map.addLayer({id: "v3-ctx", type: "fill-extrusion", source: "v3-ctx", paint: {"fill-extrusion-color": dk ? "#55606b" : "#c9cfd3", "fill-extrusion-height": ["get", "h"], "fill-extrusion-opacity": dk ? .55 : .7}});
+  map.addSource("v3-sv", {type: "geojson", data: FC.sv});
+  map.addLayer({id: "v3-sv", type: "fill-extrusion", source: "v3-sv", paint: {"fill-extrusion-color": stepExpr(o.basis), "fill-extrusion-height": heightExpr(), "fill-extrusion-opacity": .95}});
+  map.addSource("v3-lab", {type: "geojson", data: {type: "FeatureCollection", features: D.z.map(z => ({type: "Feature", properties: {n: z.name}, geometry: {type: "Point", coordinates: z.lab}}))}});
+  map.addLayer({id: "v3-lab", type: "symbol", source: "v3-lab", layout: {"text-field": ["get", "n"], "text-size": 13, "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"]},
+                paint: {"text-color": dk ? "#74B8D6" : "#1D5C7C", "text-halo-color": dk ? "#000" : "#fff", "text-halo-width": 1.3}});
+  paint();
+}
+// 왼쪽 위 조작판에 가리지 않게
+const padL = p => { const w = document.getElementById("v3-map").clientWidth; return w > 700 ? {top: p, bottom: p, right: p, left: 260} : p; };
+function home(dur){
+  const xs = D.s.map(s => s.lon), ys = D.s.map(s => s.lat);
+  map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], {padding: padL(40), pitch: 60, bearing: -20, duration: dur == null ? 1000 : dur});
+}
+/* 보는 방향 조작판: ◀▶ 돌리기, ▲▼ 기울기, 가운데 나침반 = 북쪽 위로. 짧게 누르면 한 칸, 꾹 누르면 계속 */
+function viewPad(){
+  const el = document.createElement("div");
+  el.className = "maplibregl-ctrl v3-pad" + (st("v3padmin", false) ? " min" : "");
+  el.innerHTML = `<div class="pt">보는 방향 바꾸기 <button class="fold" type="button" aria-label="조작판 접기/펴기">${st("v3padmin", false) ? "펴기 ▾" : "접기 ▴"}</button></div>
+  <div class="body">
+    <div class="grid">
+      <button class="up" type="button" title="더 옆에서 보기(눕히기)"><b>▲</b>옆에서</button>
+      <button class="lt" type="button" title="지도를 왼쪽으로 돌리기"><b>↺</b>왼쪽으로<br>돌리기</button>
+      <button class="nc" type="button" title="북쪽이 위로 오게"><svg viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15.5" fill="none" stroke="currentColor" stroke-opacity=".25"/>
+        <path d="M17 4 L21.5 17 L12.5 17 Z" fill="#B03A3A"/><path d="M17 30 L21.5 17 L12.5 17 Z" fill="currentColor" fill-opacity=".35"/>
+        <text x="17" y="11.2" text-anchor="middle" font-size="6.5" font-weight="700" fill="#fff">N</text></svg></button>
+      <button class="rt" type="button" title="지도를 오른쪽으로 돌리기"><b>↻</b>오른쪽으로<br>돌리기</button>
+      <button class="dn" type="button" title="더 위에서 내려다보기"><b>▼</b>위에서</button>
+    </div>
+    <div id="v3-read" style="font-size:11.5px;color:var(--ink2);text-align:center;margin-top:6px"></div>
+    <div class="pre">
+      <button type="button" data-p="top" aria-pressed="false">평면(위에서)</button>
+      <button type="button" data-p="3d" aria-pressed="false">입체(기본)</button>
+      <button type="button" data-p="spin" aria-pressed="false" style="grid-column:1/3">천천히 한 바퀴 돌아보기</button>
+    </div>
+    <div class="hint">마우스: 오른쪽 버튼(또는 Ctrl)을 누른 채 끌면 돌리고 기울입니다.<br>휴대폰: 두 손가락으로 돌리기, 함께 위아래로 밀면 기울기.</div>
+  </div>`;
+  const q = s => el.querySelector(s);
+  const DIRS = ["북", "북동", "동", "남동", "남", "남서", "서", "북서"];
+  let spin = null;
+  const stopSpin = () => { if (spin) { cancelAnimationFrame(spin); spin = null; q('[data-p="spin"]').setAttribute("aria-pressed", "false"); } };
+  function read(){
+    const b = map.getBearing(), p = map.getPitch();
+    q(".nc svg").style.transform = `rotate(${-b}deg)`;
+    q("#v3-read").textContent = `위쪽 방향 ${DIRS[Math.round(((b % 360) + 360) % 360 / 45) % 8]} · 기울기 ${Math.round(p)}°`;
+    q('[data-p="top"]').setAttribute("aria-pressed", p < 3);
+    q('[data-p="3d"]').setAttribute("aria-pressed", Math.abs(p - 60) < 3 && Math.abs(b + 20) < 3);
+  }
+  // 짧게 누르면 애니메이션으로 한 칸, 꾹 누르면 프레임마다 조금씩
+  function hold(btn, step, tick){
+    let t = null, raf = null, held = false;
+    const stop = () => { clearTimeout(t); cancelAnimationFrame(raf); t = raf = null; };
+    btn.addEventListener("pointerdown", e => {
+      e.preventDefault(); stopSpin(); held = false;
+      t = setTimeout(() => { held = true; const loop = () => { tick(); raf = requestAnimationFrame(loop); }; loop(); }, 260);
+    });
+    btn.addEventListener("pointerup", () => { if (!held && t) step(); stop(); });
+    btn.addEventListener("pointerleave", stop); btn.addEventListener("pointercancel", stop);
+    btn.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); stopSpin(); step(); } });
+  }
+  const rot = d => map.easeTo({bearing: map.getBearing() + d, duration: 350});
+  const tilt = d => map.easeTo({pitch: Math.max(0, Math.min(80, map.getPitch() + d)), duration: 350});
+  hold(q(".lt"), () => rot(-30), () => map.setBearing(map.getBearing() - 1.2));
+  hold(q(".rt"), () => rot(30), () => map.setBearing(map.getBearing() + 1.2));
+  hold(q(".up"), () => tilt(15), () => map.setPitch(Math.min(80, map.getPitch() + .8)));
+  hold(q(".dn"), () => tilt(-15), () => map.setPitch(Math.max(0, map.getPitch() - .8)));
+  q(".nc").onclick = () => { stopSpin(); map.easeTo({bearing: 0, duration: 500}); };
+  q('[data-p="top"]').onclick = () => { stopSpin(); map.easeTo({pitch: 0, bearing: 0, duration: 700}); };
+  q('[data-p="3d"]').onclick = () => { stopSpin(); map.easeTo({pitch: 60, bearing: -20, duration: 700}); };
+  q('[data-p="spin"]').onclick = () => {
+    if (spin) return stopSpin();
+    q('[data-p="spin"]').setAttribute("aria-pressed", "true");
+    if (map.getPitch() < 40) map.setPitch(55);
+    let last = performance.now(), turned = 0;
+    const loop = now => { const d = (now - last) / 1000 * 18; last = now; turned += d;   // 초당 18°, 20초에 한 바퀴
+      map.setBearing(map.getBearing() + d); if (turned >= 360) return stopSpin(); spin = requestAnimationFrame(loop); };
+    spin = requestAnimationFrame(loop);
+  };
+  q(".fold").onclick = () => { const m = el.classList.toggle("min"); put("v3padmin", m); q(".fold").textContent = m ? "펴기 ▾" : "접기 ▴"; };
+  // 사람이 지도를 직접 끌면 자동 회전 멈춤
+  return {onAdd(){ map.on("rotate", read); map.on("pitch", read); map.on("load", read);
+    map.getCanvasContainer().addEventListener("pointerdown", stopSpin); read(); return el; }, onRemove(){ el.remove(); }};
+}
+async function init(){
+  try {
+    FC = decode(); rail();
+    if (!window.maplibregl) await load("https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js", "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css");
+    document.getElementById("v3-msg").remove();
+    map = new maplibregl.Map({container: "v3-map", style: STYLE(), center: [127.27, 36.495], zoom: 13, pitch: 60, bearing: -20, maxPitch: 80, attributionControl: {compact: true}});
+    map.addControl(new maplibregl.NavigationControl({showCompass: false}), "top-right");
+    map.addControl(viewPad(), "top-left");
+    map.addControl(new maplibregl.ScaleControl(), "bottom-right");
+    map.on("style.load", layers);
+    map.once("load", () => home(0));
+    map.on("mousemove", "v3-sv", () => map.getCanvas().style.cursor = "pointer");
+    map.on("mouseleave", "v3-sv", () => map.getCanvas().style.cursor = "");
+    map.on("click", "v3-sv", e => {
+      const s = byNo[e.features[0].properties.sv]; if (!s) return;
+      new maplibregl.Popup({maxWidth: "300px"}).setLngLat(e.lngLat).setHTML(`<div class="pp"><b>${esc(s.name)}</b><div class="m">${esc(s.dong)} · ${esc(s.sub)} · ${esc(s.addr)}</div>
+        <table><tr><td class="m">공실률(면적)</td><td><b style="color:${col(s.rate)}">${s.rate}%</b></td></tr>
+        <tr><td class="m">공실률(호수)</td><td>${s.ru == null ? "—" : s.ru + "%"} (${s.vu}/${s.units}호)</td></tr>
+        <tr><td class="m">상가 면적</td><td>${s.area.toLocaleString()}㎡ 중 공실 ${s.vac.toLocaleString()}㎡</td></tr>
+        <tr><td class="m">용도</td><td>${esc(s.use)}</td></tr><tr><td class="m">경과연수</td><td>${s.age == null ? "—" : s.age + "년"}</td></tr>
+        <tr><td class="m">조사</td><td>${esc(s.survey)}년</td></tr></table></div>`).addTo(map);
+    });
+    document.getElementById("v3-home").onclick = () => home();
+    // 화면 밝기를 바꾸면 배경지도도 바꾼다
+    document.getElementById("theme")?.addEventListener("click", () => setTimeout(() => {
+      if (!map) return;
+      // 스타일 JSON 의 기본 위치로 튀지 않게 카메라를 기억했다가 되돌린다
+      const cam = {center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing()};
+      map.once("style.load", () => { map.jumpTo(cam); setTimeout(() => map.jumpTo(cam), 50); });
+      map.setStyle(STYLE(), {diff: false});
+    }, 0));
+  } catch (e) {
+    const m = document.getElementById("v3-msg"); if (m) m.textContent = "3D 지도를 불러오지 못했습니다(인터넷 연결 확인). 2D 지도는 그대로 쓸 수 있습니다.";
+  }
+}
+/* 위 동별 막대·카드를 누르면 3D 에서도 그 동으로 */
+document.addEventListener("click", e => {
+  if (mode !== "3d" || !map) return;
+  const el = e.target.closest(".br[data-k],.dc[data-d]"); if (!el) return;
+  const k = el.dataset.k || el.dataset.d;
+  const a = D.s.filter(s => /^z.$/.test(k) ? s.zone === k.slice(1) : s.dong === k); if (!a.length) return;
+  const xs = a.map(s => s.lon), ys = a.map(s => s.lat);
+  map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], {padding: padL(60), pitch: 60, maxZoom: 17, duration: 1200});
+}, true);
+setMode(mode);
+})();
+</script>
