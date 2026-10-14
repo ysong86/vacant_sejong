@@ -19,4 +19,4 @@ python ../sejong_livingzone/tools/encrypt_page.py dashboard.html site/index.html
 조사 원자료(`data/`)와 평문 화면(`dashboard.html`, `map3d.html`)은 저장소에 올리지 않습니다.
 `gh-pages` 브랜치에는 암호화한 `index.html` 과 `.nojekyll` 만 둡니다.
 
-제작: 세종연구원 연구모임(김성표, 안용준, 김흥주, 남영식, 이재민, 송양호, 이자은)
+제작: 세종연구원 연구모임(김성표, 안용준, 김흥주, 남영식, 이재민, 이자은, 송양호)
