@@ -109,6 +109,13 @@ def main():
             "/*__DATA3D__*/null", open(m3, encoding="utf-8").read().replace("</", "<\\/"))
         anchor = '<script type="application/json" id="data">'
         body = body.replace(anchor, part + "\n" + anchor, 1)
+    # 멀티레벨 분석 구역 — multilevel.py 가 만든 data/multilevel.json 이 있을 때만
+    ml = os.path.join(HERE, "data", "multilevel.json")
+    if os.path.exists(ml):
+        part = open(os.path.join(HERE, "multilevel_part.html"), encoding="utf-8").read().replace(
+            "/*__DATA_ML__*/null", open(ml, encoding="utf-8").read().replace("</", "<\\/"))
+        anchor = '<script type="application/json" id="data">'
+        body = body.replace(anchor, part + "\n" + anchor, 1)
     out = os.path.join(HERE, "dashboard.html")
     open(out, "w", encoding="utf-8").write(head() + "\n" + body)
     print("생성:", out, f"{os.path.getsize(out) / 1024:.0f} KB")

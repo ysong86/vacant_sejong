@@ -375,6 +375,141 @@ FACTOR_DEF = {   # 요인: (자료 출처, 만드는 법)
 }
 
 
+# ── 멀티레벨(multilevel.py → data/multilevel.json) ─────────────────────
+ML = None
+LV_COL = {"L3": "#7A4FB5", "L2": "#1D5C7C", "L1": "#9AA5A9"}
+
+
+def ml_step(ML, s):
+    return next(x for x in ML["steps"] if x["step"] == s)
+
+
+def ml_summary(ML):
+    m0, m1, m3, m4 = (ml_step(ML, s) for s in ("M0", "M1", "M3", "M4"))
+    f4 = {c["key"]: c for c in next(x for x in ML["full"] if x["step"] == "M4")["coefs"]}
+    return [f"**멀티레벨 분석**(건물 ⊂ 소권역 ⊂ 행정동): 공실 차이의 {m0['icc']['L2'] * 100:.0f}%가 소권역(상권 블록) 간, "
+            f"{m0['icc']['L3'] * 100:.0f}%만 행정동 간 차이다. 소권역 간 차이는 건물 요인이 {m1['pcv']['L2'] * 100:.0f}%, "
+            f"배후 수요·공급까지 {m3['pcv']['L2'] * 100:.0f}%, 행정동 여건까지 {m4['pcv']['L2'] * 100:.0f}%를 설명한다. "
+            f"**반경 500m 세대당 상가면적**이 2배면 공실률 +{f4['log2_sph']['b']:.1f}%p(287동 모형, p={f4['log2_sph']['p']:.3f})."]
+
+
+def ml_figure(ML):
+    """단계별: 남은 분산(빈 모형 = 100)을 수준별로 쌓아 그린다."""
+    steps = ML["steps"]
+    tot0 = sum(steps[0]["var"].values())
+    fig, ax = plt.subplots(figsize=(7.2, 2.9), dpi=200)
+    names = [f"{s['step']}\n{s['name'].replace('+ ', '+')}" for s in steps]
+    left = np.zeros(len(steps))
+    for k, lab in (("L3", "행정동 간"), ("L2", "소권역(상권 블록) 간"), ("L1", "같은 소권역 안 건물 간")):
+        v = np.array([s["var"][k] / tot0 * 100 for s in steps])
+        ax.barh(range(len(steps)), v, left=left, color=LV_COL[k], height=.62, label=lab)
+        for i, (l, w) in enumerate(zip(left, v)):
+            if w >= 5:
+                ax.text(l + w / 2, i, f"{w:.0f}", ha="center", va="center", fontsize=7, color="white", fontweight="bold")
+        left += v
+    for i, s in enumerate(steps):
+        ax.text(left[i] + 1, i, f"남은 분산 {left[i]:.0f}  ·  R²m {s['r2m']:.2f}", va="center", fontsize=6.8, color="#4B5B62")
+    ax.set_yticks(range(len(steps)))
+    ax.set_yticklabels(names, fontsize=6.6)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 135)
+    ax.set_xlabel("빈 모형(M0)의 전체 분산 = 100", fontsize=7.5)
+    ax.tick_params(axis="x", labelsize=7)
+    ax.legend(fontsize=6.5, loc="lower right", frameon=False, ncol=3, bbox_to_anchor=(1, 1.0))
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    p = os.path.join(FIG, "f6_multilevel.png")
+    fig.savefig(p)
+    plt.close(fig)
+    return p
+
+
+def ml_chapter(doc, ML, F):
+    st = {s["step"]: s for s in ML["steps"]}
+    m0, m4 = st["M0"], st["M4"]
+    f4 = {c["key"]: c for c in next(x for x in ML["full"] if x["step"] == "M4")["coefs"]}
+    g = {c["key"]: c for c in ML["glmm"]["coefs"]}
+    h1(doc, "10. 멀티레벨 분석: 건물·상권 블록·행정동")
+    sq(doc, "왜 멀티레벨인가")
+    ci(doc, "건물은 같은 소권역(동 세부 상권 블록)·같은 행정동 안에서 서로 닮는다. 이를 무시한 회귀는 표본이 독립이라고 보고 유의성을 부풀리고, "
+            "공실 차이가 **어느 수준에서** 생기는지(건물 탓인가 동네 탓인가)를 말해 주지 못한다.")
+    ci(doc, f"구조: 건물(수준 1, {ML['n']}동) ⊂ 소권역(수준 2, {ML['n_L2']}곳) ⊂ 행정동(수준 3, {ML['n_L3']}곳 — 도담·어진동은 인구 통계가 합쳐져 한 곳).")
+    sq(doc, "추가한 변수(이미 받아 둔 공공데이터만 사용)")
+    caption(doc, "표 10. 추가 변수와 기술통계(분석 표본)")
+    src = {"floors": "건축물대장 표제부(조사 건물 필지)", "park_per_100": "건축물대장 주차대수 ÷ 상가면적",
+           "sh_food": "소상공인 상가정보(도로명 주소로 건물 연결)", "sh_edu": "〃", "sh_med": "〃", "diversity": "〃 업종 대분류 엔트로피(0~1)",
+           "franchise": "〃 지점명 있는 점포", "sh_3up": "〃 층 정보 있는 점포 중", "shop_per_hh": "조사 상가면적 ÷ 공동주택 세대(필지 좌표화)",
+           "hh500": "건축물대장 공동주택 세대수", "apt_ppm": "아파트 실거래(최근 24개월, 세대 가중, 반경 1km)",
+           "u_chg": "주민등록 인구(생활권 상황판)", "u_old": "〃", "u_emp": "SGIS 종사자 ÷ 주민등록 인구"}
+    table(doc, ["변수", "자료·만드는 법", "n", "평균(표준편차)", "범위"],
+          [[d["name"], src.get(d["key"], ""), f"{d['n']}", f"{d['mean']:,.2f} ({d['sd']:,.2f})", f"{d['min']:,.1f} ~ {d['max']:,.1f}"]
+           for d in ML["raw_desc"]], [4.2, 6.0, 1.0, 3.0, 2.8], size=7.6, align_right=(2, 3, 4))
+    note(doc, "점포 '개수'는 공실이 많으면 저절로 줄어드는 공실의 거울이라 쓰지 않고 업종·층 '구성 비율'만 썼다. 상가정보는 현재 시점이고 공실 조사는 "
+              "2023·2025년이라 시점이 다르다. 주차·층 정보가 없는 건물은 중앙값으로 채웠다.")
+    sq(doc, "분석 과정")
+    ci(doc, f"**표본**: 입점 점포가 하나도 연결되지 않은 {ML['excluded']['n']}동은 공실률이 {ML['excluded']['rate']}%로, 점포가 없는 것 자체가 공실의 결과다. "
+            f"업종 구성을 쓰는 주 모형은 {ML['n']}동으로 하고, {ML['n_full']}동 전체로 같은 단계(업종 묶음 제외)를 다시 추정해 결론을 대조했다.")
+    ci(doc, "**모형**: 선형 혼합모형. 공실률(면적, %)을 고정효과(요인)와 행정동·소권역 무작위절편, 건물 오차로 나눈다. REML 로 추정하고, 단계 간 비교(AIC)는 최대우도로 다시 맞췄다.")
+    formula(doc, "공실률ᵢⱼₖ = β₀ + Σ βₚ·xₚ + uₖ(행정동) + vⱼₖ(소권역) + εᵢⱼₖ,   uₖ ~ N(0, σ²₃), vⱼₖ ~ N(0, σ²₂), ε ~ N(0, σ²₁)")
+    ci(doc, "**급내상관(ICC)**: 전체 분산 중 각 수준이 차지하는 몫. 빈 모형(M0)에서 구하면 '공실 차이가 어느 수준에서 나는가'가 된다.")
+    formula(doc, "ICC(행정동) = σ²₃ / (σ²₃ + σ²₂ + σ²₁),   ICC(소권역) = σ²₂ / (σ²₃ + σ²₂ + σ²₁)")
+    ci(doc, "**설명된 분산 비율(PCV)**: 요인을 넣었을 때 각 수준의 분산이 빈 모형보다 몇 % 줄었는지. 어느 수준의 차이를 어떤 요인 묶음이 설명하는지 보여 준다.")
+    formula(doc, "PCV(수준) = 1 − σ²(모형) / σ²(빈 모형)")
+    ci(doc, "**단계**: M0 빈 모형 → M1 기존 건물 요인 8개 → M2 건물 내부(층·주차·업종 구성) 8개 → M3 반경 수요·공급 2개 → M4 행정동 여건 3개.")
+    ci(doc, "**설명력**: Nakagawa R² — 고정효과만의 몫(R²m)과 무작위효과까지 합한 몫(R²c).")
+    ci(doc, f"**교차 확인**: 점포 한 칸(호)을 공실 1/0으로 놓은 이항 혼합모형({ML['glmm']['n_units']:,}칸, 건물·소권역·행정동 무작위절편, 변분 베이즈). "
+            "큰 건물이 더 큰 무게를 갖는다. 변분 베이즈는 불확실성을 작게 잡는 경향이 있어 **방향 일치 여부**만 본다.")
+    ci(doc, f"**공간 점검**: M4 잔차의 Moran's I(반경 500m) = {ML['moran']['I']} (p = {ML['moran']['p']}) → 남은 공간 자기상관이 없다.")
+    sq(doc, "결과 ① 공실 차이는 어느 수준에서 나는가")
+    caption(doc, f"표 11. 단계별 수준별 분산·설명력(n = {ML['n']})")
+    rows = []
+    for s in ML["steps"]:
+        p = s["pcv"]
+        rows.append([f"{s['step']} {s['name']}", f"{s['k']}", f"{s['aic']:,.1f}", f"{s['var']['L3']:.1f}", f"{s['var']['L2']:.1f}", f"{s['var']['L1']:.1f}",
+                     "—" if s["step"] == "M0" else f"{(p['L2'] or 0) * 100:.0f}%", "—" if s["step"] == "M0" else f"{(p['L1'] or 0) * 100:.0f}%",
+                     f"{s['r2m']:.2f} / {s['r2c']:.2f}"])
+    table(doc, ["단계", "요인", "AIC", "σ²행정동", "σ²소권역", "σ²건물", "소권역 PCV", "건물 PCV", "R²m / R²c"], rows,
+          [4.3, 1.0, 1.6, 1.6, 1.6, 1.6, 1.7, 1.6, 2.0], size=7.6, align_right=(1, 2, 3, 4, 5, 6, 7, 8))
+    note(doc, "σ² 는 공실률(%p)의 분산. 행정동 분산은 0에 가까워 PCV 가 불안정하므로 표에서 뺐다. AIC 는 작을수록 좋다(최대우도 기준).")
+    caption(doc, "그림 6. 단계별 남은 분산(빈 모형 = 100)")
+    picture(doc, F["ml"], 15.5)
+    ci(doc, f"빈 모형에서 공실 차이의 **{m0['icc']['L2'] * 100:.0f}%가 소권역 간**, {m0['icc']['L3'] * 100:.0f}%가 행정동 간, 나머지 "
+            f"{(1 - m0['icc']['L2'] - m0['icc']['L3']) * 100:.0f}%가 같은 소권역 안 건물 간 차이다. **공실은 행정동보다 상권 블록 단위에서 갈린다.**")
+    ci(doc, f"소권역 간 차이는 건물 연식·용도(M1)로 {st['M1']['pcv']['L2'] * 100:.0f}%, 반경 수요·공급(M3)까지 {st['M3']['pcv']['L2'] * 100:.0f}%, "
+            f"행정동 여건(M4)까지 {m4['pcv']['L2'] * 100:.0f}%가 설명된다. 블록 간 차이는 대부분 '어떤 건물이 얼마나 공급됐나'로 설명된다.")
+    ci(doc, f"반면 같은 블록 안 건물 간 차이는 {m4['pcv']['L1'] * 100:.0f}%만 줄었다 — 임대료·관리·건물주 전략 등 자료에 없는 건물 고유 요인이 크다.")
+    sq(doc, "결과 ② 요인별 효과(M4, 모든 수준을 함께)")
+    caption(doc, "표 12. M4 계수(공실률 %p)와 대조")
+    rows, bold = [], []
+    for i, c in enumerate(m4["coefs"]):
+        f = f4.get(c["key"])
+        gg = g.get(c["key"])
+        if c["p"] < 0.05:
+            bold.append(i)
+        rows.append([c["level"], c["name"], c["unit"], f"{c['b']:+.2f}", f"[{c['lo']:+.1f}, {c['hi']:+.1f}]", f"{c['p']:.3f}{pstar(c['p'])}",
+                     (f"{f['b']:+.1f}{pstar(f['p'])}" if f else "—"), (f"{gg['or']:.2f}" if gg else "—")])
+    table(doc, ["수준", "요인", "단위", "계수", "95% 신뢰구간", "p", f"{ML['n_full']}동", "이항 OR"], rows,
+          [1.3, 4.4, 1.6, 1.6, 2.8, 1.5, 1.6, 1.6], size=7.6, align_right=(3, 5, 6, 7), align_center=(0, 2, 4), bold_rows=tuple(bold))
+    note(doc, f"굵은 줄 = 주 모형에서 유의(p<0.05). '{ML['n_full']}동' = 업종 묶음을 뺀 전체 표본 M4 계수(별표 = 유의). "
+              "'이항 OR' = 점포 한 칸 단위 이항 혼합모형의 승산비(1보다 크면 공실 쪽).")
+    agree = sum(1 for c in m4["coefs"] if c["key"] in g and (c["b"] > 0) == (g[c["key"]]["or"] > 1))
+    sph = next(c for c in m4["coefs"] if c["key"] == "log2_sph")
+    ci(doc, f"**연식·용도는 그대로 핵심**: 준공 5년 이하 {next(c for c in m4['coefs'] if c['key'] == 'new5')['b']:+.1f}%p, "
+            f"제2종 근생 {next(c for c in m4['coefs'] if c['key'] == 'type2')['b']:+.1f}%p로, 동네 차이를 통제해도 유지된다.")
+    ci(doc, f"**배후 세대 대비 상가 총량**: 반경 500m 세대당 상가면적이 2배면 {sph['b']:+.1f}%p(p={sph['p']:.2f}), 전체 {ML['n_full']}동에서는 "
+            f"{f4['log2_sph']['b']:+.1f}%p(p={f4['log2_sph']['p']:.3f})로 유의하다. '상가 총량 과잉' 가설을 직접 뒷받침한다.")
+    div = next(c for c in m4["coefs"] if c["key"] == "div01")
+    ci(doc, f"**업종 다양도**: 다양도가 0.1 높으면 {div['b']:+.1f}%p(p={div['p']:.3f}). 한두 업종에 치우친 건물이 더 비어 있다 — 업종 구성이 다양한 건물일수록 공실이 낮다(상관이며, 공실이 업종 구성을 바꾸는 역방향도 가능).")
+    old_, emp_ = (next(c for c in m4["coefs"] if c["key"] == k) for k in ("old1", "emp01"))
+    ci(doc, f"**행정동 여건**: 고령 비중 1%p당 {old_['b']:+.1f}%p, 직주비 0.1당 {emp_['b']:+.1f}%p. 낮 인구(종사자)가 많은 업무형 동은 주말·저녁 수요가 비어 "
+            "근린상가가 버티기 어려운 것으로 보인다.")
+    ci(doc, f"이항 혼합모형과 비교하면 {len(m4['coefs'])}개 요인 중 {agree}개의 방향이 같다.")
+    sq(doc, "한계")
+    ci(doc, f"행정동이 {ML['n_L3']}곳뿐이라 행정동 분산 추정이 불안정하다(대부분 0에 가깝게 추정). 행정동 효과는 고정효과(인구 증감·고령·직주비)로 읽는 것이 안전하다.")
+    ci(doc, "입점 업종(현재)과 공실(2023·2025)의 시점이 다르고, 업종 구성은 공실과 서로 영향을 주고받을 수 있다(역인과).")
+    ci(doc, "카드 매출·생활인구·임대료는 쓰지 않았다(별도 확보 필요). 이 자료가 붙으면 같은 틀에서 수요 쪽 설명이 강해진다.")
+
+
 def build(A, R, X, F):
     doc = Document()
     sec = doc.sections[0]
@@ -406,7 +541,7 @@ def build(A, R, X, F):
         f"**상가 비중(10%p당 {co['shop_share']['b']:+.1f}%p)**이다. 정류장·중심지 거리 등 입지 요인은 유의하지 않다.",
         f"머신러닝(랜덤포레스트)으로 교차 확인해도 **건물 연식**이 가장 중요한 요인이다. 공실은 입지보다 **공급 구조(연식·용도·상가 총량)**에서 갈린다.",
         f"공실이 모여 있는 핫스팟은 {A['hot']['hot']}동으로, 가로·블록 단위의 집중 대응 대상 구역을 고르는 근거가 된다.",
-    ], title="요 약")
+    ] + (ml_summary(ML) if ML else []), title="요 약")
 
     # 1. 개요
     h1(doc, "1. 분석 개요")
@@ -423,7 +558,8 @@ def build(A, R, X, F):
         ["⑥ 교차 확인", "랜덤포레스트 + 순열 중요도", "표 7, 그림 4"],
         ["⑦ 동별 분해", "동 공실률이 평균과 다른 이유를 요인별로 분해", "표 8·9"],
         ["⑧ 공간 군집", "Getis-Ord Gi* 핫스팟(반경 500m)", "그림 5"],
-    ], [2.4, 9.6, 5.0])
+    ] + ([["⑨ 멀티레벨", "건물 ⊂ 소권역 ⊂ 행정동 3수준 혼합모형, 건물 내부·배후 수요·행정동 여건 추가", "표 10~12, 그림 6"]] if ML else []),
+        [2.4, 9.6, 5.0])
 
     # 2. 조사 자료
     h1(doc, "2. 조사 자료(엑셀)와 정리 과정")
@@ -618,33 +754,52 @@ def build(A, R, X, F):
     caption(doc, "그림 5. 건물별 공실률과 핫스팟")
     picture(doc, F["hot"], 15.0)
 
-    # 10. 시사점
-    h1(doc, "10. 종합과 시사점")
+    # 10. 멀티레벨
+    if ML:
+        ml_chapter(doc, ML, F)
+
+    # 11. 시사점
+    h1(doc, ("11" if ML else "10") + ". 종합과 시사점")
     box(doc, [
         "**공급 시기 관리**: 공실은 준공 초기에 몰린다. 생활권별 상가 준공 시기를 나눠 공급하고, 준공 초기 임대료 감면·용도 유연화로 흡수 기간을 줄인다.",
         "**제2종 근생·상층부 용도 전환**: 제2종 근린생활시설 건물의 공실이 크다. 공유업무·돌봄·교육·생활SOC 등으로 전환을 허용하도록 지구단위계획 지침 완화를 검토한다.",
         "**부속 상가 총량 조정**: 업무·주거가 주된 건물의 부속 상가가 더 빈다. 이런 건물의 상가 의무 비율을 낮추고 1층 가로변 위주로 계획한다.",
         "**구역 단위 대응**: 핫스팟 구역을 집중 지원·임시 활용(팝업·공공 임대) 대상으로 삼는다. 3D 상황판에서 해당 블록을 확인할 수 있다.",
         "**입지 투자보다 공급 구조**: 정류장·중심지 접근성 개선만으로는 공실이 크게 줄지 않는다는 결과다. 교통 투자와 상가 공급 관리를 함께 봐야 한다.",
-    ], title="시사점")
+    ] + ([
+        "**대응 단위는 행정동이 아니라 상권 블록**: 멀티레벨 분석에서 행정동 고유 차이는 거의 없고 공실 차이는 소권역(블록)에서 갈린다. "
+        "지원·용도 전환·임시 활용을 블록 단위로 설계한다.",
+        "**배후 세대 대비 상가 총량 관리**: 반경 500m 세대당 상가면적이 2배면 공실률이 높아진다(287동 모형에서 유의). "
+        "신규 상업용지 공급과 상가 비율 지침을 배후 세대 수에 연동한다.",
+    ] if ML else []), title="시사점")
     sq(doc, "한계")
     ci(doc, f"조사 시점이 섞여 있다({years[0]}년 {n23}동, {years[-1]}년 {A['n_buildings'] - n23}동). 시점 효과는 통제하지 않았다.")
     ci(doc, "건물 단위 자료라 층별(1층·상층) 차이와 업종, 임대료, 관리 상태는 보지 못했다.")
     ci(doc, "회귀·머신러닝 결과는 상관관계이지 인과가 아니다. 정류장·중심지 거리는 직선거리다.")
     ci(doc, "건물이 적은 동(해밀 2동, 다정 10동 등)의 값과 분해 결과는 불안정하다. 5생활권은 조사 건물이 없다.")
     para(doc, "")
-    note(doc, "재현: sejong_vacant 폴더에서 prepare.py → analyze.py → tools/make_report.py. 모든 수치는 같은 원자료에서 다시 계산되며, "
+    note(doc, "재현: sejong_vacant 폴더에서 prepare.py → analyze.py → tools/extra_features.py → multilevel.py → tools/make_report.py. 모든 수치는 같은 원자료에서 다시 계산되며, "
               "보고서 생성 시 회귀계수·분해 합계를 analysis.json 과 대조해 검산한다.")
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    doc.save(OUT)
-    return OUT
+    try:
+        doc.save(OUT)
+        return OUT
+    except PermissionError:          # Word 에서 열려 있으면 덮어쓸 수 없다 → 새 이름으로
+        alt = OUT.replace(".docx", "_v2.docx")
+        doc.save(alt)
+        return alt
 
 
 def main():
+    global ML
+    mp = os.path.join(HERE, "data", "multilevel.json")
+    ML = json.load(open(mp, encoding="utf-8")) if os.path.exists(mp) else None
     A = json.load(open(os.path.join(HERE, "data", "analysis.json"), encoding="utf-8"))
     X = excel_profile()
     R = recompute(A)
     F = figures(A, R)
+    if ML:
+        F["ml"] = ml_figure(ML)
     out = build(A, R, X, F)
     print("저장:", out)
     print("VIF", {k: round(v, 1) for k, v in R["vif"].items()})

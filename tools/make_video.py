@@ -32,7 +32,8 @@ BLUR = r"""
   const css = document.createElement('style');
   css.textContent = `
   .kpi .v,.kpi .s,#notice,.br .bv,#ols-note,#rf-note,.fr .fv,.dc .rate,.dc .meta,.dp .v,#detail,.tip,
-  .maplibregl-popup-content,#method,.vblur,#v3 .note{filter:blur(5px)!important}`;
+  .maplibregl-popup-content,#method,.vblur,#v3 .note,#ml-sec .ml-step .v,#ml-sec .ml-stack span,#ml-sec .ml-leg,
+  #ml-sec .ml-find,#ml-sec p,#ml-sec .sec-h .note{filter:blur(5px)!important}`;
   document.head.appendChild(css);
   const mark = () => document.querySelectorAll('.find h3,.find p,.dc .dh b ~ *,.sm .note').forEach(e => {
     if (/\d/.test(e.textContent)) e.classList.add('vblur'); });
@@ -84,6 +85,7 @@ def main():
         b = p.chromium.launch(channel="chrome", headless=True, args=["--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"])
         ctx = b.new_context(viewport={"width": W, "height": H}, device_scale_factor=1, color_scheme="light",
                             record_video_dir=TMP, record_video_size={"width": W, "height": H})
+        ctx.route("**/hits.sh/**", lambda r: r.abort())          # 녹화가 실제 조회수를 올리지 않게
         ctx.add_init_script("try{localStorage.clear()}catch(e){}")
         ctx.add_init_script(f"document.addEventListener('DOMContentLoaded', () => {{ {BLUR} }});")
         t_open = time.time()
@@ -167,13 +169,13 @@ def main():
         # 24~31초 — 분석
         cap("왜 비는가", "회귀분석·머신러닝으로 본 공실 요인")
         pg.mouse.move(W * 0.92, H * 0.4, steps=8)
-        scroll_to("#forest", 1100, 140)
-        pg.wait_for_timeout(1600)
-        cap("동별 진단과 시사점", "평균보다 높은(낮은) 이유를 요인별로")
-        scroll_to("#dcards", 1000, 120)
-        pg.wait_for_timeout(1400)
+        scroll_to("#forest", 1000, 140)
+        pg.wait_for_timeout(1200)
+        cap("멀티레벨 분석", "건물·상권 블록·행정동 세 수준으로 나눠 본 공실")
+        scroll_to("#ml-sec", 1000, 20)
+        pg.wait_for_timeout(1900)
         cap("연구모임 내부 검토용", "비밀번호 문의: 송양호(ysong@sri.re.kr)")
-        pg.wait_for_timeout(1800)
+        pg.wait_for_timeout(1500)
 
         end = time.time() - t_open
         video = pg.video.path()
