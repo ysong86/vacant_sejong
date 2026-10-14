@@ -246,6 +246,7 @@ async function init(){
     if (!window.maplibregl) await load("https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js", "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css");
     document.getElementById("v3-msg").remove();
     map = new maplibregl.Map({container: "v3-map", style: STYLE(), center: [127.27, 36.495], zoom: 13, pitch: 60, bearing: -20, maxPitch: 80, attributionControl: {compact: true}});
+    window.__v3 = {map, S: D.s};      // 소개 영상 녹화(tools/make_video.py)가 건물 위치를 찾는 데 쓴다
     map.addControl(new maplibregl.NavigationControl({showCompass: false}), "top-right");
     map.addControl(viewPad(), "top-left");
     map.addControl(new maplibregl.ScaleControl(), "bottom-right");

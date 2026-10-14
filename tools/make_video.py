@@ -32,7 +32,7 @@ BLUR = r"""
   const css = document.createElement('style');
   css.textContent = `
   .kpi .v,.kpi .s,#notice,.br .bv,#ols-note,#rf-note,.fr .fv,.dc .rate,.dc .meta,.dp .v,#detail,.tip,
-  .maplibregl-popup-content,#method,.vblur,#v3 .note,#ml-sec .ml-step .v,#ml-sec .ml-stack span,#ml-sec .ml-leg,
+  .maplibregl-popup-content .pp>b,.maplibregl-popup-content .pp>.m,.maplibregl-popup-content td:nth-child(2),#method,.vblur,#v3 .note,#ml-sec .ml-step .v,#ml-sec .ml-stack span,#ml-sec .ml-leg,
   #ml-sec .ml-find,#ml-sec p,#ml-sec .sec-h .note{filter:blur(5px)!important}`;
   document.head.appendChild(css);
   const mark = () => document.querySelectorAll('.find h3,.find p,.dc .dh b ~ *,.sm .note').forEach(e => {
@@ -114,11 +114,11 @@ def main():
 
         # 0~3초 — 제목
         cap("세종 행복도시 상가공실 상황판", "집합상가 전수조사 · 생활권·동·건물 단위")
-        pg.wait_for_timeout(1300)
+        pg.wait_for_timeout(1000)
         move(".kpi:nth-child(1)", click=False)
         pg.wait_for_timeout(500)
         move(".kpi:nth-child(3)", steps=16, click=False)
-        pg.wait_for_timeout(500)
+        pg.wait_for_timeout(300)
 
         # 3~7초 — 생활권·동별
         cap("어디가 비어 있나", "생활권·동별 공실률 — 누르면 지도로 이동")
@@ -127,44 +127,54 @@ def main():
         move("#zbars .br:nth-child(1)", click=False)
         pg.wait_for_timeout(500)
         move("#dbars .br:nth-child(2)", steps=20)
-        pg.wait_for_timeout(700)
+        pg.wait_for_timeout(500)
 
         # 7~13초 — 2D 지도
         cap("공실 지도(2D)", "건물별 공실률 · 조건 거르기 · 핫스팟")
         scroll_to("#map-sec", 900, 10)
         pg.wait_for_timeout(400)
         move('#rail [data-f="new"]', steps=16)
-        pg.wait_for_timeout(900)
+        pg.wait_for_timeout(700)
         move('#rail [data-l="hot"]', steps=14)
-        pg.wait_for_timeout(900)
+        pg.wait_for_timeout(700)
         move('#rail [data-f="all"]', steps=12)
-        pg.wait_for_timeout(500)
+        pg.wait_for_timeout(300)
         move("#map", steps=16, click=False, dx=.55, dy=.5)
         pg.mouse.wheel(0, -400)
-        pg.wait_for_timeout(800)
+        pg.wait_for_timeout(600)
 
         # 13~24초 — 3D 지도
         cap("3D 지도", "건물을 실제 높이로 — 조사 건물은 공실률 색")
         move('.v3-toggle button[data-v="3d"]', steps=16)
         pg.wait_for_function("!!document.querySelector('#v3-map canvas') && !document.getElementById('v3-msg')", timeout=30000)
-        pg.wait_for_timeout(1200)
+        pg.wait_for_timeout(900)
         # 행복도시 전체는 3D 로 보기엔 멀다 — 동 막대를 누른 것처럼 나성동으로 날아간다(3D 조각이 막대 클릭을 받는다)
         pg.evaluate("""() => { const y = scrollY; document.querySelector('#dbars .br[data-k="나성동"]').click(); scrollTo(0, y); }""")
         pg.wait_for_timeout(100)
         scroll_to("#map-sec", 300, 10)
-        pg.wait_for_timeout(1700)
+        pg.wait_for_timeout(1500)
+        # 건물을 누르면 정보창 — 화면 안에 보이는 나성동 조사 건물 중 상가가 큰 것(항목 이름은 보이고 값은 흐림)
+        cap("건물을 누르면", "공실률·상가 면적·용도·경과연수가 뜹니다")
+        pt = pg.evaluate("""() => { const {map, S} = window.__v3, c = map.getCanvas().getBoundingClientRect();
+            const cand = S.filter(s => s.dong === "나성동").sort((a, b) => b.area - a.area);
+            for (const s of cand) { const p = map.project([s.lon, s.lat]);
+              if (p.x > c.width * .35 && p.x < c.width * .85 && p.y > c.height * .3 && p.y < c.height * .8) return [c.left + p.x, c.top + p.y]; }
+            return [c.left + c.width / 2, c.top + c.height / 2]; }""")
+        pg.mouse.move(pt[0], pt[1] - 6, steps=18)
+        pg.mouse.down()
+        pg.mouse.up()
+        pg.wait_for_timeout(2100)
+        pg.evaluate("() => document.querySelectorAll('.maplibregl-popup').forEach(p => p.remove())")
         cap("보는 방향 바꾸기", "돌리기 · 기울이기 · 한 바퀴 돌아보기")
         move(".v3-pad .rt", steps=14, click=False)
         pg.mouse.down()
-        pg.wait_for_timeout(1500)
+        pg.wait_for_timeout(1200)
         pg.mouse.up()
-        move(".v3-pad .up", steps=10)
-        pg.wait_for_timeout(600)
         move('.v3-pad [data-p="spin"]', steps=12)
-        pg.wait_for_timeout(2200)
+        pg.wait_for_timeout(1800)
         cap("공실률 강조", "공실이 클수록 건물이 높이 솟습니다")
         move('#v3-rail [data-g="hmode"][data-v="vac"]', steps=16)
-        pg.wait_for_timeout(2300)
+        pg.wait_for_timeout(2000)
 
         # 24~31초 — 분석
         cap("왜 비는가", "회귀분석·머신러닝으로 본 공실 요인")
@@ -173,7 +183,7 @@ def main():
         pg.wait_for_timeout(1200)
         cap("멀티레벨 분석", "건물·상권 블록·행정동 세 수준으로 나눠 본 공실")
         scroll_to("#ml-sec", 1000, 20)
-        pg.wait_for_timeout(1900)
+        pg.wait_for_timeout(1700)
         cap("연구모임 내부 검토용", "비밀번호 문의: 송양호(ysong@sri.re.kr)")
         pg.wait_for_timeout(1500)
 
