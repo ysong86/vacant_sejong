@@ -402,6 +402,8 @@ def rate_desc(recs, area_name, yr, kind, group_key="sub"):
     unit = "동" if kind == "mall" else "곳"
     hi = sum(1 for r in recs if r["rate"] >= 40)
     zero = sum(1 for r in recs if r["rate"] == 0)
+    if kind == "apt" and group_key == "sub":          # 아파트 상가의 '동 세부'는 상가 유형이라 동으로 묶는다
+        group_key = "dong"
     g = collections.defaultdict(list)
     for r in recs:
         g[r[group_key]].append(r)
@@ -409,7 +411,7 @@ def rate_desc(recs, area_name, yr, kind, group_key="sub"):
     s = (f"{area_name}의 {YRL[yr]} 조사 {KINDL[kind]} {len(recs)}{unit}, 상가 면적 {a:,.0f}㎡ 중 공실 {v:,.0f}㎡로 공실률(면적) {rate:.1f}%. "
          f"공실률 40% 이상 {hi}{unit}, 공실 0% {zero}{unit}.")
     if len(gs) >= 2:
-        s += f" 동 세부 기준 가장 높은 곳은 {gs[0][1]}({gs[0][0]:.1f}%, {gs[0][2]}{unit}), 가장 낮은 곳은 {gs[-1][1]}({gs[-1][0]:.1f}%)."
+        s += f" {'동 세부' if group_key == 'sub' else '동'} 기준 가장 높은 곳은 {gs[0][1]}({gs[0][0]:.1f}%, {gs[0][2]}{unit}), 가장 낮은 곳은 {gs[-1][1]}({gs[-1][0]:.1f}%)."
     return s
 
 
@@ -648,19 +650,20 @@ def chg_desc(pairs, kind, where="행복도시 전체"):
     up = sorted(recs, key=lambda r: -r["d"])
     s = (f"{where}에서 두 조사에 모두 있는 {KINDL[kind]} {len(recs)}{unit}의 공실률(면적)은 {a23:.1f}% → {a25:.1f}%({a25 - a23:+.1f}%p). "
          f"3%p 이상 증가 {sum(1 for r in recs if r['d'] >= 3)}{unit}, 3%p 이상 감소 {sum(1 for r in recs if r['d'] <= -3)}{unit}.")
+    gk = "sub" if kind == "mall" else "dong"
     g = collections.defaultdict(list)
     for q, p in pairs:
-        g[q["sub"]].append((q, p))
+        g[q[gk]].append((q, p))
     gs = sorted(((agg([q for q, _ in v])[0] - agg([p for _, p in v])[0], k) for k, v in g.items() if len(v) >= 2))
     if len(gs) >= 2:
-        s += f" 동 세부 기준 가장 크게 줄어든 곳 {gs[0][1]}({gs[0][0]:+.1f}%p), 가장 크게 늘어난 곳 {gs[-1][1]}({gs[-1][0]:+.1f}%p)."
+        s += f" {'동 세부' if gk == 'sub' else '동'} 기준 가장 크게 줄어든 곳 {gs[0][1]}({gs[0][0]:+.1f}%p), 가장 크게 늘어난 곳 {gs[-1][1]}({gs[-1][0]:+.1f}%p)."
     return s
 
 
 def where_txt(recs, k=3):
     if not recs:
         return ""
-    c = collections.Counter(r["sub"] for r in recs).most_common(k)
+    c = collections.Counter(r["sub"] if r["kind"] == "mall" else r["dong"] for r in recs).most_common(k)
     return "(" + ", ".join(f"{s} {n}" for s, n in c) + ")"
 
 
