@@ -1,5 +1,10 @@
 <style>
 /* 공실 상황판 전용 */
+.selbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:16px 0 4px;padding:10px 12px;border:1px solid var(--line);background:var(--panel);
+  position:sticky;top:0;z-index:20}
+.selbar .sl{font-size:12px;font-weight:700;color:var(--ink2)}
+.selbar .chip small{font-weight:400;opacity:.75;margin-left:2px}
+.selbar .sn{font-size:11.5px;color:var(--ink3);flex:1 1 260px}
 .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding-block:20px 4px}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
 .kpi .l{font-size:12.5px;color:var(--ink2);font-weight:600}
@@ -81,6 +86,8 @@
 </header>
 <div class="notice" id="notice"></div>
 
+<div class="selbar" id="selbar" role="group" aria-label="조사 시점과 대상"></div>
+
 <div class="kpis" id="kpis"></div>
 
 <section>
@@ -154,14 +161,53 @@
 (function(){
 "use strict";
 const D = JSON.parse(document.getElementById("data").textContent);
-const A = D.a;
+const A0 = D.a;   // 원인 분석(회귀·구간·동별 카드·시사점) = 2025년 12월 집합상가
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmtN = n => n == null ? "—" : Math.round(n).toLocaleString("ko-KR");
 const store = {get(k,d){try{const v=localStorage.getItem("vs:"+k);return v==null?d:JSON.parse(v)}catch(e){return d}},
                set(k,v){try{localStorage.setItem("vs:"+k,JSON.stringify(v))}catch(e){}}};
 const ZONE = Object.fromEntries(D.zones.map(z => [z.id, z]));
-const AVG = A.rate_area;
+/* 조사 시점·대상 고르기 — 핵심 수치·막대·2D·3D 지도가 따라 바뀐다(원인 분석은 2025.12 집합상가 고정) */
+const YRL = {"2023": "2023년 6월", "2025": "2025년 12월"}, KINDL = {mall: "집합상가", apt: "아파트 단지 내 상가", all: "집합상가 + 아파트 상가"};
+const UNITW = k => k === "mall" ? "동" : "곳";
+let SEL = Object.assign({yr: "2025", kind: "mall"}, store.get("sel", {}));
+window.VSEL = SEL;
+function view(){
+  const R = D.surv.filter(r => r.yr === SEL.yr && (SEL.kind === "all" || r.kind === SEL.kind) && r.lon != null);
+  const sum = (a, f) => a.reduce((x, r) => x + (f(r) || 0), 0);
+  const rate = g => { const a = sum(g, r => r.area); return a ? sum(g, r => r.vac) / a * 100 : 0; };
+  const rateU = g => { const u = sum(g, r => r.units); return u ? sum(g, r => r.vu) / u * 100 : 0; };
+  const grp = k => { const m = {}; R.forEach(r => (m[r[k]] = m[r[k]] || []).push(r)); return m; };
+  const wage = g => { const h = g.filter(r => r.age != null), a = sum(h, r => r.area); return a ? sum(h, r => r.age * r.area) / a : 0; };
+  return {
+    rows: R, n_buildings: R.length, units: sum(R, r => r.units), vac_units: sum(R, r => r.vu), shop_area: sum(R, r => r.area), vac_area: sum(R, r => r.vac),
+    rate_area: +rate(R).toFixed(1), rate_units: +rateU(R).toFixed(1),
+    by_zone: Object.entries(grp("zone")).filter(([z]) => ZONE[z]).map(([z, g]) => ({zone: z, rate: +rate(g).toFixed(1), rate_units: +rateU(g).toFixed(1), n: g.length, area: sum(g, r => r.area)})),
+    by_dong: Object.entries(grp("dong")).map(([d, g]) => ({dong: d, unit: g[0].unit, zone: g[0].zone, rate: +rate(g).toFixed(1), rate_units: +rateU(g).toFixed(1),
+      n: g.length, units: sum(g, r => r.units), area: sum(g, r => r.area), age: +wage(g).toFixed(1),
+      new5_share: Math.round(sum(g.filter(r => r.age != null && r.age <= 5), r => r.area) / Math.max(1, sum(g, r => r.area)) * 100)})),
+    points: R.map(r => Object.assign({}, r, {vac_units: r.vu, gi: r.gi == null ? 0 : r.gi, survey: YRL[r.yr]})),
+    hot: {hot: R.filter(r => (r.gi || 0) > 1.96).length, cold: R.filter(r => (r.gi || 0) < -1.96).length},
+  };
+}
+let A = view(), AVG = A.rate_area;
+function selbar(){
+  const ch = (g, v, t) => `<button class="chip" type="button" data-sg="${g}" data-sv="${v}" aria-pressed="${SEL[g] === v}">${t}</button>`;
+  const cnt = (yr, k) => D.surv.filter(r => r.yr === yr && (k === "all" || r.kind === k)).length;
+  $("#selbar").innerHTML = `<span class="sl">조사 시점</span><div class="chips">${ch("yr", "2023", "2023년 6월")}${ch("yr", "2025", "2025년 12월")}</div>
+    <span class="sl">대상</span><div class="chips">${ch("kind", "mall", `집합상가 <small>${cnt(SEL.yr, "mall")}동</small>`)}${ch("kind", "apt", `아파트 상가 <small>${cnt(SEL.yr, "apt")}곳</small>`)}${ch("kind", "all", "모두")}</div>
+    <span class="sn">아래 핵심 수치·막대·지도(2D·3D)가 고른 조사로 바뀝니다. 원인 분석은 2025년 12월 집합상가 기준입니다.</span>`;
+}
+$("#selbar").addEventListener("click", e => {
+  const b = e.target.closest("[data-sg]"); if (!b) return;
+  SEL[b.dataset.sg] = b.dataset.sv; store.set("sel", SEL); window.VSEL = SEL;
+  A = view(); AVG = A.rate_area;
+  selbar(); renderTop(); recalc(); build(); draw(); rail();
+  const top = [...A.by_dong].sort((a, b) => b.rate - a.rate)[0]; if (top) detailDong(top.dong); else $("#detail").innerHTML = "";
+  window.dispatchEvent(new CustomEvent("vacsel", {detail: SEL}));
+});
+selbar();
 
 /* 테마 */
 (function(){
@@ -174,7 +220,8 @@ const AVG = A.rate_area;
   });
 })();
 $("#stamp").textContent = "화면 생성 " + D.built;
-$("#notice").innerHTML = `<b>행정중심복합도시 집합상가 전수조사</b>(세종연구원, ${A.survey_years.join("·")}년 조사) ${A.n_buildings}동 ${fmtN(A.units)}호를 반영했습니다. 대부분 ${A.survey_years[0]}년 조사이고 일부 건물만 ${A.survey_years[A.survey_years.length-1]}년에 다시 조사해, 시점이 섞여 있습니다. 원인 분석과 시사점은 연구모임 검토 전 초안입니다.`;
+(function(){ const c = (yr, k) => D.surv.filter(r => r.yr === yr && r.kind === k).length;
+$("#notice").innerHTML = `<b>행정중심복합도시 상가 전수조사</b>(세종연구원) — <b>2023년 6월</b> 집합상가 ${c("2023", "mall")}동·아파트 단지 내 상가 ${c("2023", "apt")}곳, <b>2025년 12월</b> 집합상가 ${c("2025", "mall")}동·아파트 단지 내 상가 ${c("2025", "apt")}곳. 아래 단추로 조사 시점과 대상을 고르세요. 원인 분석과 시사점은 2025년 12월 집합상가 기준의 연구모임 검토 전 초안입니다.`; })();
 
 /* 색: 공실률 5단계 */
 const RATE_BREAKS = [10, 20, 30, 40];
@@ -182,15 +229,16 @@ const RATE_COLORS = ["#2E7D4F", "#8DB86B", "#E5B94A", "#E07B39", "#B03A3A"];
 const rateColor = v => v == null ? "var(--na)" : RATE_COLORS[RATE_BREAKS.filter(b => v >= b).length];
 
 /* KPI */
-(function(){
+function renderTop(){
   const reb = D.reb;
   $("#kpis").innerHTML = [
     {l:"상가 공실률(면적)", v:A.rate_area.toFixed(1), u:"%", s:`공실 ${fmtN(A.vac_area)}㎡ / 상가 ${fmtN(A.shop_area)}㎡`},
     {l:"상가 공실률(호수)", v:A.rate_units.toFixed(1), u:"%", s:`공실 ${fmtN(A.vac_units)}호 / ${fmtN(A.units)}호`},
-    {l:"조사 건물", v:fmtN(A.n_buildings), u:"동", s:`행복도시 ${A.by_dong.length}개 동 집합상가`},
+    {l: SEL.kind === "apt" ? "조사 단지 상가" : "조사 건물", v:fmtN(A.n_buildings), u:UNITW(SEL.kind), s:`${YRL[SEL.yr]} · 행복도시 ${A.by_dong.length}개 동 ${KINDL[SEL.kind]}`},
     {l:"부동산원 표본(집합상가)", v: reb ? reb.toFixed(1) : "—", u:"%", s:"세종 전체 · 전수조사보다 낮게 잡힘"},
   ].map(k => `<div class="kpi"><span class="l">${esc(k.l)}</span><span class="v">${k.v}<small>${k.u}</small></span><span class="s">${esc(k.s)}</span></div>`).join("");
-})();
+  renderBars();
+}
 
 /* 막대 */
 function barRow(label, rate, extra, color, key){
@@ -199,10 +247,12 @@ function barRow(label, rate, extra, color, key){
     <span class="bt"><i style="width:${w}%;background:${color}"></i><b style="left:${avg}%"></b></span>
     <span class="bv">${rate.toFixed(1)}% <small>${extra}</small></span></div>`;
 }
-$("#zbars").innerHTML = [...A.by_zone].sort((a, b) => b.rate - a.rate).map(z =>
-  barRow(ZONE[z.zone].name, z.rate, `${z.n}동`, ZONE[z.zone].color, "z" + z.zone)).join("");
-$("#dbars").innerHTML = [...A.by_dong].sort((a, b) => b.rate - a.rate).map(d =>
-  barRow(d.dong, d.rate, `${d.n}동`, rateColor(d.rate), d.dong)).join("");
+function renderBars(){
+  $("#zbars").innerHTML = [...A.by_zone].sort((a, b) => b.rate - a.rate).map(z =>
+    barRow(ZONE[z.zone].name, z.rate, `${z.n}${UNITW(SEL.kind)}`, ZONE[z.zone].color, "z" + z.zone)).join("");
+  $("#dbars").innerHTML = [...A.by_dong].sort((a, b) => b.rate - a.rate).map(d =>
+    barRow(d.dong, d.rate, `${d.n}${UNITW(SEL.kind)}`, rateColor(d.rate), d.dong)).join("");
+}
 
 /* ── 지도 ── */
 const LON0 = 127.10, LON1 = 127.47, LAT0 = 36.355, LAT1 = 36.785;
@@ -217,9 +267,12 @@ const HOME = boxOf(127.222, 36.458, 127.352, 36.548);
 const rp = rings => rings.map(r => "M" + r.map(p => X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join("L") + "Z").join("");
 const lp = lines => lines.map(l => "M" + l.map(p => X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join("L")).join("");
 const svg = $("#map"), NS = "http://www.w3.org/2000/svg";
-const DONGRATE = Object.fromEntries(A.by_dong.map(d => [d.dong, d]));
-const UNITRATE = {};
-A.by_dong.forEach(d => { const u = UNITRATE[d.unit] || (UNITRATE[d.unit] = {area:0, vac:0, dongs:[]}); u.area += d.area; u.vac += d.area * d.rate / 100; u.dongs.push(d.dong); });
+let DONGRATE = {}, UNITRATE = {};
+function recalc(){
+  DONGRATE = Object.fromEntries(A.by_dong.map(d => [d.dong, d])); UNITRATE = {};
+  A.by_dong.forEach(d => { const u = UNITRATE[d.unit] || (UNITRATE[d.unit] = {area:0, vac:0, dongs:[]}); u.area += d.area; u.vac += d.area * d.rate / 100; u.dongs.push(d.dong); });
+}
+recalc();
 let state = {filter: store.get("filter", "all"), layers: Object.assign({pts:true, hot:false, roads:true, names:true}, store.get("layers", {})), base: store.get("base", "map"), sel:null};
 let vb = Object.assign({}, HOME);
 
@@ -252,7 +305,10 @@ function draw(){
   const maxA = Math.max(...A.points.map(p => p.area));
   $("#g-pts").innerHTML = state.layers.pts ? pts.sort((a, b) => b.area - a.area).map(p => {
     const r = (2.6 + 9 * Math.sqrt(p.area / maxA)) * px;
-    return `<circle class="bp${state.sel === p.name ? " sel" : ""}" data-i="${A.points.indexOf(p)}" cx="${X(p.lon).toFixed(2)}" cy="${Y(p.lat).toFixed(2)}" r="${r.toFixed(2)}" fill="${rateColor(p.rate)}"/>`;
+    const cx = X(p.lon), cy = Y(p.lat), cls = `bp${state.sel === p.id ? " sel" : ""}`, di = A.points.indexOf(p);
+    if (p.kind === "apt") { const q = r * 1.25;   // 아파트 단지 내 상가 = 마름모(단지 주소 자리)
+      return `<path class="${cls}" data-i="${di}" d="M${cx.toFixed(2)},${(cy - q).toFixed(2)}L${(cx + q).toFixed(2)},${cy.toFixed(2)}L${cx.toFixed(2)},${(cy + q).toFixed(2)}L${(cx - q).toFixed(2)},${cy.toFixed(2)}Z" fill="${rateColor(p.rate)}"/>`; }
+    return `<circle class="${cls}" data-i="${di}" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${r.toFixed(2)}" fill="${rateColor(p.rate)}"/>`;
   }).join("") : "";
   $("#g-hot").innerHTML = state.layers.hot ? A.points.filter(p => Math.abs(p.gi) > 1.96).map(p =>
     `<circle class="${p.gi > 0 ? "hot" : "cold"}" cx="${X(p.lon).toFixed(2)}" cy="${Y(p.lat).toFixed(2)}" r="${(13 * px).toFixed(2)}"/>`).join("") : "";
@@ -261,7 +317,7 @@ function draw(){
   $("#g-r").style.display = state.layers.roads ? "" : "none";
   $("#g-pts").querySelectorAll(".bp").forEach(c => {
     const p = A.points[+c.dataset.i];
-    c.addEventListener("mousemove", e => showTip(e, `<b>${esc(p.name)}</b> · ${esc(p.dong)}<br>공실률 ${p.rate.toFixed(1)}% · 공실 ${p.vac_units}/${p.units}호<br>${esc(p.use)} · 준공 ${p.age == null ? "—" : p.age.toFixed(1) + "년"}`));
+    c.addEventListener("mousemove", e => showTip(e, `<b>${esc(p.name)}</b> · ${esc(p.dong)}${p.kind === "apt" ? " · 아파트 상가" : ""}<br>공실률 ${p.rate.toFixed(1)}% · 공실 ${p.vac_units}/${p.units}호<br>${esc(p.use)} · 준공 ${p.age == null ? "—" : p.age.toFixed(1) + "년"}`));
     c.addEventListener("mouseleave", hideTip);
     c.addEventListener("click", () => { if (!moved) select(p); });
   });
@@ -340,7 +396,7 @@ function views(){
   $("#views").innerHTML = `<button class="chip" type="button" id="home">행복도시 전체</button>`;
   $("#home").addEventListener("click", () => setVB(Object.assign({}, HOME)));
   $("#legend").innerHTML = RATE_COLORS.map((c, i) => `<span class="lg-item"><span class="dot" style="background:${c}"></span>${i === 0 ? "10% 미만" : i === 4 ? "40% 이상" : RATE_BREAKS[i-1] + "~" + RATE_BREAKS[i] + "%"}</span>`).join("") +
-    `<span class="lg-item"><span class="sw" style="background:none;border-top:2px dashed var(--brt);height:0;width:18px"></span>BRT</span><span class="lg-item muted">원 크기 = 상가 면적</span>`;
+    `<span class="lg-item"><span class="sw" style="background:none;border-top:2px dashed var(--brt);height:0;width:18px"></span>BRT</span><span class="lg-item muted">● 집합상가 · ◆ 아파트 단지 내 상가(단지 주소 자리) · 크기 = 상가 면적</span>`;
 }
 function zoomDong(dong){
   const pts = A.points.filter(p => p.dong === dong); if (!pts.length) return;
@@ -350,42 +406,45 @@ function zoomDong(dong){
   $("#map-sec").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
 }
 function detailDong(dong){
-  const d = DONGRATE[dong], dc = A.decomp[dong];
+  const d = DONGRATE[dong]; if (!d) return;
+  const dc = SEL.yr === "2025" && SEL.kind === "mall" ? A0.decomp[dong] : null;
   $("#detail").innerHTML = `<div class="eyebrow">선택한 동</div><div class="dn">${esc(dong)}</div>
-    <div style="margin:4px 0 8px"><span class="zchip" style="background:${ZONE[d.zone].color}">${esc(ZONE[d.zone].name)}</span></div>
+    <div style="margin:4px 0 8px">${ZONE[d.zone] ? `<span class="zchip" style="background:${ZONE[d.zone].color}">${esc(ZONE[d.zone].name)}</span>` : ""} <span class="small muted">${YRL[SEL.yr]} · ${KINDL[SEL.kind]}</span></div>
     <div class="kv"><span class="k">공실률(면적)</span><span class="v">${d.rate.toFixed(1)}%</span><span class="k">공실률(호수)</span><span class="v">${d.rate_units.toFixed(1)}%</span>
-    <span class="k">조사 건물</span><span class="v">${d.n}동 · ${fmtN(d.units)}호</span><span class="k">상가 면적 가중 평균 연식</span><span class="v">${d.age}년</span>
+    <span class="k">조사 대상</span><span class="v">${d.n}${UNITW(SEL.kind)} · ${fmtN(d.units)}호</span><span class="k">상가 면적 가중 평균 연식</span><span class="v">${d.age}년</span>
     <span class="k">준공 5년 이하 면적 비중</span><span class="v">${d.new5_share}%</span></div>
     ${dc ? `<h4>평균(${AVG}%)과의 차이 ${dc.gap > 0 ? "+" : ""}${dc.gap}%p</h4>${dc.parts.map(p => `<div class="small">${esc(p.name)} <b class="num">${p.pp > 0 ? "+" : ""}${p.pp.toFixed(1)}%p</b></div>`).join("")}<div class="small muted">모형 밖 요인 ${dc.other > 0 ? "+" : ""}${dc.other.toFixed(1)}%p</div>` : ""}
-    <h4>공실 많은 건물</h4><ul class="rank-list">${A.points.filter(p => p.dong === dong).sort((a, b) => b.rate - a.rate).slice(0, 5).map(p => `<li><span>${esc(p.name)}</span><span class="num">${p.rate.toFixed(0)}%</span></li>`).join("")}</ul>`;
+    <h4>공실 많은 곳</h4><ul class="rank-list">${A.points.filter(p => p.dong === dong).sort((a, b) => b.rate - a.rate).slice(0, 5).map(p => `<li><span>${esc(p.name)}</span><span class="num">${p.rate.toFixed(0)}%</span></li>`).join("")}</ul>`;
 }
 function select(p){
-  state.sel = p.name; draw();
+  state.sel = p.id; draw();
   $("#detail").innerHTML = `<div class="eyebrow">선택한 건물</div><div class="dn">${esc(p.name)}</div>
-    <div class="small muted" style="margin:2px 0 8px">${esc(p.dong)} · ${esc(p.sub)}</div>
+    <div class="small muted" style="margin:2px 0 8px">${p.kind === "apt" ? "아파트 단지 내 상가 · " + esc(p.sub) + " · " + esc(p.dong) : esc(p.dong) + " · " + esc(p.sub)}</div>
     <div class="kv"><span class="k">공실률(면적)</span><span class="v">${p.rate.toFixed(1)}%</span><span class="k">공실 호수</span><span class="v">${p.vac_units} / ${p.units}호</span>
     <span class="k">상가 면적</span><span class="v">${fmtN(p.area)}㎡</span><span class="k">주용도</span><span class="v">${esc(p.use)}</span>
-    <span class="k">준공 경과</span><span class="v">${p.age == null ? "—" : p.age.toFixed(1) + "년"}</span><span class="k">버스정류장까지</span><span class="v">${p.d_stop}m</span>
-    <span class="k">BRT 정류장까지</span><span class="v">${p.d_brt}m</span><span class="k">핫스팟 Gi*</span><span class="v">${p.gi > 1.96 ? "공실 밀집" : p.gi < -1.96 ? "저공실 밀집" : "—"} (${p.gi})</span>
-    <span class="k">조사 연도</span><span class="v">${esc(p.survey)}</span></div>
+    <span class="k">준공 경과</span><span class="v">${p.age == null ? "—" : p.age.toFixed(1) + "년"}</span>
+    ${p.gi ? `<span class="k">핫스팟 Gi*</span><span class="v">${p.gi > 1.96 ? "공실 밀집" : p.gi < -1.96 ? "저공실 밀집" : "—"} (${p.gi})</span>` : ""}
+    <span class="k">조사</span><span class="v">${esc(p.survey)}</span>
+    ${(() => { const o = D.surv.find(x => x.kind === p.kind && x.code === p.code && x.yr !== p.yr);   // 다른 조사 시점의 같은 건물
+      return o ? `<span class="k">${YRL[o.yr]}</span><span class="v">${o.rate.toFixed(1)}% (지금과 ${Math.abs(p.rate - o.rate).toFixed(1)}%p ${(p.yr > o.yr ? p.rate - o.rate : o.rate - p.rate) >= 0 ? "증가" : "감소"} — 2023→2025)</span>` : ""; })()}</div>
     <button class="btn" type="button" id="todong" style="margin-top:10px">${esc(p.dong)} 전체 보기</button>`;
   $("#todong").addEventListener("click", () => detailDong(p.dong));
 }
-document.querySelectorAll(".br").forEach(b => b.addEventListener("click", () => {
+document.addEventListener("click", e => { const b = e.target.closest("#zbars .br, #dbars .br"); if (!b) return;
   const key = b.dataset.k;
   if (key.startsWith("z")) { const ds = A.by_dong.filter(d => d.zone === key.slice(1)).map(d => d.dong);
     const pts = A.points.filter(p => ds.includes(p.dong)); const xs = pts.map(p => p.lon), ys = pts.map(p => p.lat);
     setVB(boxOf(Math.min(...xs) - .006, Math.min(...ys) - .006, Math.max(...xs) + .006, Math.max(...ys) + .006));
     $("#map-sec").scrollIntoView({behavior:"smooth"}); }
   else zoomDong(key);
-}));
-build(); rail(); views(); setVB(vb);
-detailDong([...A.by_dong].sort((a, b) => b.rate - a.rate)[0].dong);
+});
+renderTop(); build(); rail(); views(); setVB(vb);
+{ const t = [...A.by_dong].sort((a, b) => b.rate - a.rate)[0]; if (t) detailDong(t.dong); }
 window.addEventListener("resize", draw);
 
 /* ── 회귀 ── */
 (function(){
-  const C = [...A.ols.coefs].sort((a, b) => b.b - a.b);
+  const C = [...A0.ols.coefs].sort((a, b) => b.b - a.b);
   const lo = Math.floor(Math.min(...C.map(c => c.lo), -5) / 10) * 10, hi = Math.ceil(Math.max(...C.map(c => c.hi), 5) / 10) * 10;
   const pos = v => (v - lo) / (hi - lo) * 100;
   const ticks = []; for (let t = lo; t <= hi; t += 10) ticks.push(t);
@@ -395,11 +454,11 @@ window.addEventListener("resize", draw);
         <span class="ft">${ticks.map(t => `<b style="left:${pos(t)}%"${t === 0 ? ' class="z"' : ""}></b>`).join("")}
           <em style="left:${pos(c.lo)}%;width:${pos(c.hi) - pos(c.lo)}%;background:${col}"></em><u style="left:${pos(c.b)}%;background:${col}"></u></span>
         <span class="fv">${c.b > 0 ? "+" : ""}${c.b.toFixed(1)}</span></div>`; }).join("");
-  $("#ols-note").innerHTML = `건물 ${A.ols.n}동, 상가 면적으로 가중한 회귀(강건 표준오차). 설명력 R² ${A.ols.r2}. 각 요인 이름 옆 단위(예: 정류장 100m, 상가 비중 10%p)당 공실률 변화(%p)입니다.`;
-  const mx = Math.max(...A.rf.importance.map(x => x.imp));
-  $("#rfbars").innerHTML = A.rf.importance.slice(0, 8).map(x => `<div class="br" style="cursor:default;grid-template-columns:170px minmax(0,1fr) 48px"><span class="bn" style="font-size:12px">${esc(x.name)}</span>
+  $("#ols-note").innerHTML = `건물 ${A0.ols.n}동, 상가 면적으로 가중한 회귀(강건 표준오차). 설명력 R² ${A0.ols.r2}. 각 요인 이름 옆 단위(예: 정류장 100m, 상가 비중 10%p)당 공실률 변화(%p)입니다.`;
+  const mx = Math.max(...A0.rf.importance.map(x => x.imp));
+  $("#rfbars").innerHTML = A0.rf.importance.slice(0, 8).map(x => `<div class="br" style="cursor:default;grid-template-columns:170px minmax(0,1fr) 48px"><span class="bn" style="font-size:12px">${esc(x.name)}</span>
     <span class="bt"><i style="width:${Math.max(0, x.imp / mx * 100)}%;background:var(--accent)"></i></span><span class="bv">${x.imp.toFixed(2)}</span></div>`).join("");
-  $("#rf-note").textContent = `랜덤포레스트(나무 600그루)의 순열 중요도 — 그 요인을 뒤섞었을 때 예측이 얼마나 나빠지는지입니다. 표본 밖 설명력(OOB R²) ${A.rf.oob_r2}로, 회귀와 같은 방향의 결과를 교차 확인하는 용도입니다.`;
+  $("#rf-note").textContent = `랜덤포레스트(나무 600그루)의 순열 중요도 — 그 요인을 뒤섞었을 때 예측이 얼마나 나빠지는지입니다. 표본 밖 설명력(OOB R²) ${A0.rf.oob_r2}로, 회귀와 같은 방향의 결과를 교차 확인하는 용도입니다.`;
 })();
 
 /* ── 구간별 ── */
@@ -407,22 +466,22 @@ window.addEventListener("resize", draw);
   const T = [["age","준공 경과연수"],["use","건물 주용도"],["shop_share","연면적 중 상가 비중"],["d_stop","버스정류장까지 거리"],
              ["d_brt","BRT 정류장까지 거리"],["d_center","나성동 중심상업지까지"],["stores","주변 200m 점포 수"]];
   $("#sms").innerHTML = T.map(([key, title]) => {
-    const rows = A.bins[key] || [];
+    const rows = A0.bins[key] || [];
     return `<div class="card sm"><h4>${esc(title)}</h4><div class="bars">${rows.map(r => `<div class="br" style="grid-template-columns:86px minmax(0,1fr) 74px;cursor:default">
-      <span class="bn" style="font-size:11.5px">${esc(r.label)}</span><span class="bt"><i style="width:${Math.min(100, r.rate / 60 * 100)}%;background:${rateColor(r.rate)}"></i><b style="left:${AVG / 60 * 100}%"></b></span>
+      <span class="bn" style="font-size:11.5px">${esc(r.label)}</span><span class="bt"><i style="width:${Math.min(100, r.rate / 60 * 100)}%;background:${rateColor(r.rate)}"></i><b style="left:${A0.rate_area / 60 * 100}%"></b></span>
       <span class="bv">${r.rate.toFixed(1)}% <small>${r.n}동</small></span></div>`).join("")}</div></div>`;
   }).join("");
 })();
 
 /* ── 동별 카드 ── */
 (function(){
-  const ds = [...A.by_dong].sort((a, b) => b.rate - a.rate);
-  const mx = Math.max(...Object.values(A.decomp).flatMap(d => d.parts.map(p => Math.abs(p.pp))).concat(Object.values(A.decomp).map(d => Math.abs(d.other))), 10);
+  const ds = [...A0.by_dong].sort((a, b) => b.rate - a.rate);
+  const mx = Math.max(...Object.values(A0.decomp).flatMap(d => d.parts.map(p => Math.abs(p.pp))).concat(Object.values(A0.decomp).map(d => Math.abs(d.other))), 10);
   const bar = v => { const w = Math.abs(v) / mx * 50; return `<span class="t"><i style="${v >= 0 ? "left:50%" : "right:50%"};width:${w}%;background:${v >= 0 ? "var(--bad)" : "var(--good)"}"></i></span>`; };
   $("#dcards").innerHTML = ds.map(d => {
-    const dc = A.decomp[d.dong];
+    const dc = A0.decomp[d.dong];
     return `<div class="dc" data-d="${esc(d.dong)}"><div class="dh"><b>${esc(d.dong)}</b><span class="zchip" style="background:${ZONE[d.zone].color}">${esc(ZONE[d.zone].name)}</span></div>
-      <div><span class="rate ${d.rate > AVG + 5 ? "hi" : d.rate < AVG - 5 ? "lo" : ""}">${d.rate.toFixed(1)}%</span>
+      <div><span class="rate ${d.rate > A0.rate_area + 5 ? "hi" : d.rate < A0.rate_area - 5 ? "lo" : ""}">${d.rate.toFixed(1)}%</span>
         <span class="meta">평균 대비 ${dc.gap > 0 ? "+" : ""}${dc.gap}%p · ${d.n}동 · ${fmtN(d.units)}호</span></div>
       ${dc.parts.slice(0, 3).map(p => `<div class="dp"><span>${esc(p.name)}</span>${bar(p.pp)}<span class="v">${p.pp > 0 ? "+" : ""}${p.pp.toFixed(1)}</span></div>`).join("")}
       <div class="dp"><span class="muted">모형 밖 요인</span>${bar(dc.other)}<span class="v">${dc.other > 0 ? "+" : ""}${dc.other.toFixed(1)}</span></div></div>`;

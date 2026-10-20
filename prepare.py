@@ -36,8 +36,11 @@ NASUNG = (127.2600, 36.4870)          # 나성동 중심상업(어반아트리�
 
 
 def load_survey():
-    wb = openpyxl.load_workbook(os.path.join(RAW, "survey.xlsx"), read_only=True, data_only=True)
-    ws = wb.worksheets[0]
+    # 원인 분석은 「상황판 데이터_23,25_최종.xlsx」(data/raw/survey_2325.xlsx)의 2025.12 집합상가 시트.
+    # 이 시트의 '비고'(2023/2025)는 조사연도가 아니라 처음 조사 목록에 든 해 → first 로 둔다. 조사 시점은 모두 2025년 12월.
+    src = os.path.join(RAW, "survey_2325.xlsx")
+    wb = openpyxl.load_workbook(src if os.path.exists(src) else os.path.join(RAW, "survey.xlsx"), read_only=True, data_only=True)
+    ws = next((w for w in wb.worksheets if w.title.startswith("2025") and "집합" in w.title), wb.worksheets[0])
     out = []
     for i, r in enumerate(ws.iter_rows(values_only=True)):
         if i == 0 or r[0] is None:
@@ -49,7 +52,7 @@ def load_survey():
             "addr": (r[6] or "").strip(), "use": (r[7] or "").replace("\xa0", " ").strip(),
             "gfa": num(r[8]), "shop_area": num(r[9]), "vac_area": num(r[10]),
             "units": int(r[12] or 0), "vac_units": int(r[13] or 0),
-            "survey": str(r[15] or "").strip()[:4], "apr": apr, "age_class": (r[17] or "").strip(),
+            "survey": "2025", "first": str(r[15] or "").strip()[:4], "apr": apr, "age_class": (r[17] or "").strip(),
         })
     return out
 
@@ -105,7 +108,7 @@ def features(rows):
         r["vac_rate_units"] = round(r["vac_units"] / r["units"] * 100, 1) if r["units"] else None
         try:
             d = dt.date(int(r["apr"][:4]), int(r["apr"][4:6]), int(r["apr"][6:8]))
-            ref = dt.date(int(r["survey"]), 6, 30) if r["survey"].isdigit() else today
+            ref = dt.date(2025, 12, 31)          # 조사 시점(2025년 12월) 기준 경과연수
             r["age"] = round((ref - d).days / 365.25, 1)
         except (ValueError, IndexError):
             r["age"] = None

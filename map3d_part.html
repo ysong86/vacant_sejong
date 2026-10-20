@@ -87,7 +87,8 @@ function rail(){
      <h4>일반 건물</h4><div class="chips">${chip("ctx", "1", "보이기", o.ctx)}${chip("ctx", "0", "숨기기", !o.ctx)}</div>
      <h4>공실률</h4><div class="v3-leg">${CO.map(c => `<span style="background:${c}"></span>`).join("")}</div>
      <div class="v3-tk"><span>0</span><span>10</span><span>20</span><span>30</span><span>40%+</span></div>
-     <div class="note">건물 외곽선·높이: 브이월드 GIS건물통합정보(높이가 없으면 지상층수×3.3m, 둘 다 없으면 4m). 행복도시 건물 ${D ? D.b.length.toLocaleString() : "—"}동 가운데 조사 건물 ${D ? D.s.length : "—"}동만 색칠.
+     <div class="note">건물 외곽선·높이: 브이월드 GIS건물통합정보(높이가 없으면 지상층수×3.3m, 둘 다 없으면 4m). 행복도시 건물 ${D ? D.b.length.toLocaleString() : "—"}동 가운데 ${D ? YRL[SEL().yr] + " " + (SEL().kind === "all" ? "집합상가·아파트 상가" : KINDL[SEL().kind]) + " " + D.s.filter(pickS).length + "곳" : "조사 건물"}만 색칠.
+     아파트 단지 내 상가는 단지 필지 안 낮은 건물(건축물대장의 근린생활시설 동 수만큼)에 칠하고, 찾지 못한 단지는 단지 주소 자리에 작은 기둥으로 표시합니다.
      '공실률 강조'는 공실률 1%p마다 4m를 더합니다. 배경지도 © CARTO, OpenStreetMap 기여자.</div>`;
 }
 document.getElementById("v3-rail").addEventListener("click", e => {
@@ -98,19 +99,39 @@ document.getElementById("v3-rail").addEventListener("click", e => {
   rail(); paint();
 });
 
+const SEL = () => window.VSEL || {yr: "2025", kind: "mall"};
+const YRL = {"2023": "2023년 6월", "2025": "2025년 12월"}, KINDL = {mall: "집합상가", apt: "아파트 단지 내 상가"};
+const pickS = s => { const q = SEL(); return s.yr === q.yr && (q.kind === "all" || s.kind === q.kind); };
+let BASE = null;
 function decode(){
   D = JSON.parse(document.getElementById("data3d").textContent);
   D.s.forEach(s => byNo[s.no] = s);
-  const sv = [], ctx = [];
-  D.b.forEach(b => {
-    const rings = b.slice(2).map(f => { const r = []; for (let i = 0; i < f.length; i += 2) r.push([127 + f[i] / 1e5, 36 + f[i + 1] / 1e5]); return [r]; });
-    const p = {h: Math.max(b[0] / 10, 3)};
-    const s = byNo[b[1]];
-    if (s) Object.assign(p, {sv: s.no, rate: s.rate, ru: s.ru == null ? -1 : s.ru});
-    (s ? sv : ctx).push({type: "Feature", properties: p, geometry: {type: "MultiPolygon", coordinates: rings}});
+  BASE = D.b.map(b => ({type: "Feature", recs: Array.isArray(b[1]) ? b[1] : [], properties: {h: Math.max(b[0] / 10, 3)},
+    geometry: {type: "MultiPolygon", coordinates: b.slice(2).map(f => { const r = []; for (let i = 0; i < f.length; i += 2) r.push([127 + f[i] / 1e5, 36 + f[i + 1] / 1e5]); return [r]; })}}));
+  return fcFor();
+}
+function fcFor(){
+  const sv = [], ctx = [], seen = new Set();
+  BASE.forEach(f => {
+    const rs = f.recs.map(n => byNo[n]).filter(s => s && pickS(s)).sort((a, b) => b.area - a.area);
+    if (rs.length) { const s = rs[0]; rs.forEach(x => seen.add(x.no));
+      sv.push({type: "Feature", properties: {h: f.properties.h, sv: s.no, rate: s.rate, ru: s.ru == null ? -1 : s.ru}, geometry: f.geometry}); }
+    else ctx.push({type: "Feature", properties: f.properties, geometry: f.geometry});
+  });
+  // 상가동을 못 찾은 아파트 상가 → 단지 주소 자리에 작은 기둥(표식)
+  D.s.filter(s => pickS(s) && !seen.has(s.no) && !s.fp).forEach(s => {
+    const dx = .00014, dy = .00011;
+    sv.push({type: "Feature", properties: {h: 9, sv: s.no, rate: s.rate, ru: s.ru == null ? -1 : s.ru, mark: 1},
+      geometry: {type: "Polygon", coordinates: [[[s.lon - dx, s.lat - dy], [s.lon + dx, s.lat - dy], [s.lon + dx, s.lat + dy], [s.lon - dx, s.lat + dy], [s.lon - dx, s.lat - dy]]]}});
   });
   return {sv: {type: "FeatureCollection", features: sv}, ctx: {type: "FeatureCollection", features: ctx}};
 }
+// 위쪽 '조사 시점·대상' 단추가 바뀌면 다시 칠한다(2D 쪽이 vacsel 이벤트를 쏜다)
+window.addEventListener("vacsel", () => {
+  if (!D) return;
+  FC = fcFor(); rail();
+  if (map && map.getSource("v3-sv")) { map.getSource("v3-sv").setData(FC.sv); map.getSource("v3-ctx").setData(FC.ctx); }
+});
 function dark(){ return (document.documentElement.getAttribute("data-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark"; }
 const STYLE = () => `https://basemaps.cartocdn.com/gl/${dark() ? "dark-matter" : "positron"}-gl-style/style.json`;
 function load(src, css){
@@ -168,7 +189,7 @@ function layers(){
 // 왼쪽 위 조작판에 가리지 않게
 const padL = p => { const w = document.getElementById("v3-map").clientWidth; return w > 700 ? {top: p, bottom: p, right: p, left: 260} : p; };
 function home(dur){
-  const xs = D.s.map(s => s.lon), ys = D.s.map(s => s.lat);
+  const a = D.s.filter(pickS).length ? D.s.filter(pickS) : D.s, xs = a.map(s => s.lon), ys = a.map(s => s.lat);
   map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], {padding: padL(40), pitch: 60, bearing: -20, duration: dur == null ? 1000 : dur});
 }
 /* 보는 방향 조작판: ◀▶ 돌리기, ▲▼ 기울기, 가운데 나침반 = 북쪽 위로. 짧게 누르면 한 칸, 꾹 누르면 계속 */
@@ -256,12 +277,12 @@ async function init(){
     map.on("mouseleave", "v3-sv", () => map.getCanvas().style.cursor = "");
     map.on("click", "v3-sv", e => {
       const s = byNo[e.features[0].properties.sv]; if (!s) return;
-      new maplibregl.Popup({maxWidth: "300px"}).setLngLat(e.lngLat).setHTML(`<div class="pp"><b>${esc(s.name)}</b><div class="m">${esc(s.dong)} · ${esc(s.sub)} · ${esc(s.addr)}</div>
+      new maplibregl.Popup({maxWidth: "300px"}).setLngLat(e.lngLat).setHTML(`<div class="pp"><b>${esc(s.name)}</b><div class="m">${esc(KINDL[s.kind])}${s.kind === "apt" ? " · " + esc(s.sub) : ""} · ${esc(s.dong)}${s.kind === "mall" ? " · " + esc(s.sub) : ""} · ${esc(s.addr)}</div>${e.features[0].properties.mark ? '<div class="m">※ 상가동 위치를 찾지 못해 단지 주소 자리에 표시</div>' : ""}
         <table><tr><td class="m">공실률(면적)</td><td><b style="color:${col(s.rate)}">${s.rate}%</b></td></tr>
         <tr><td class="m">공실률(호수)</td><td>${s.ru == null ? "—" : s.ru + "%"} (${s.vu}/${s.units}호)</td></tr>
         <tr><td class="m">상가 면적</td><td>${s.area.toLocaleString()}㎡ 중 공실 ${s.vac.toLocaleString()}㎡</td></tr>
         <tr><td class="m">용도</td><td>${esc(s.use)}</td></tr><tr><td class="m">경과연수</td><td>${s.age == null ? "—" : s.age + "년"}</td></tr>
-        <tr><td class="m">조사</td><td>${esc(s.survey)}년</td></tr></table></div>`).addTo(map);
+        <tr><td class="m">조사</td><td>${YRL[s.yr]}</td></tr></table></div>`).addTo(map);
     });
     document.getElementById("v3-home").onclick = () => home();
     // 화면 밝기를 바꾸면 배경지도도 바꾼다
@@ -281,7 +302,7 @@ document.addEventListener("click", e => {
   if (mode !== "3d" || !map) return;
   const el = e.target.closest(".br[data-k],.dc[data-d]"); if (!el) return;
   const k = el.dataset.k || el.dataset.d;
-  const a = D.s.filter(s => /^z.$/.test(k) ? s.zone === k.slice(1) : s.dong === k); if (!a.length) return;
+  const a = D.s.filter(s => pickS(s) && (/^z.$/.test(k) ? s.zone === k.slice(1) : s.dong === k)); if (!a.length) return;
   const xs = a.map(s => s.lon), ys = a.map(s => s.lat);
   map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], {padding: padL(60), pitch: 60, maxZoom: 17, duration: 1200});
 }, true);

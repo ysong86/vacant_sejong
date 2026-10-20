@@ -53,9 +53,15 @@ def label_pt(rings):
 
 def compact(data):
     """상황판(build.py)에 끼울 가벼운 자료 → data/map3d.json.
-    건물 = [높이(dm), 조사번호(0=없음), 고리...], 고리 = 좌표 정수 평탄화((경도-127)·1e5, (위도-36)·1e5)."""
+    건물 = [높이(dm), 조사 기록 id 목록(없으면 0), 고리...], 고리 = 좌표 정수 평탄화((경도-127)·1e5, (위도-36)·1e5).
+    조사 기록은 tools/prepare_all.py 의 data/survey_all.json(2023.06·2025.12 × 집합상가·아파트 상가)."""
+    recs = json.load(open(os.path.join(HERE, "data", "survey_all.json"), encoding="utf-8"))
+    link = {}
+    for r in recs:
+        for i in r.get("fp") or []:
+            link.setdefault(i, []).append(r["id"])
     B = []
-    for f in data["footprints"]["features"]:
+    for i, f in enumerate(data["footprints"]["features"]):
         p = f["properties"]
         rings = []
         for poly in f["geometry"]["coordinates"]:
@@ -64,9 +70,11 @@ def compact(data):
                 for x, y in r:
                     flat += [round((x - 127) * 1e5), round((y - 36) * 1e5)]
                 rings.append(flat)
-        B.append([round(p["h"] * 10), p.get("sv") or 0] + rings)
-    S = [{k: s[k] for k in ("no", "name", "dong", "sub", "zone", "use", "addr", "area", "vac", "units", "vu", "rate", "ru",
-                             "survey", "age", "lon", "lat")} for s in data["survey"]]
+        B.append([round(p["h"] * 10), link.get(i, 0)] + rings)
+    S = [{"no": r["id"], "yr": r["yr"], "kind": r["kind"], "name": r["name"], "dong": r["dong"], "sub": r["sub"], "zone": r["zone"],
+          "use": r["use"], "addr": r["addr"], "area": round(r["area"]), "vac": round(r["vac"]), "units": r["units"], "vu": r["vu"],
+          "rate": r["rate"], "ru": r["ru"], "age": r["age"], "lon": r["lon"], "lat": r["lat"], "fp": len(r.get("fp") or [])}
+         for r in recs if r["lon"] is not None]
     out = {"b": B, "s": S, "z": data["zones"]}
     path = os.path.join(HERE, "data", "map3d.json")
     json.dump(out, open(path, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
