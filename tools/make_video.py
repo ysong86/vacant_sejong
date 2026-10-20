@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""상가공실 상황판 기능 소개 영상(약 30초, MP4) — 로그인 문에서 '미리보기'로 공개한다.
+"""상가공실 상황판 기능 소개 영상(약 40초, MP4) — 로그인 문에서 '미리보기'로 공개한다.
 
   python tools/make_video.py
     입력: dashboard.html(평문, 로컬)   출력: docs/상가공실상황판_소개.mp4 + site/preview.mp4
@@ -24,7 +24,7 @@ TMP = os.path.join(HERE, "data", "video_tmp")
 OUT = os.path.join(HERE, "docs", "상가공실상황판_소개.mp4")
 SITE = os.path.join(HERE, "site", "preview.mp4")
 W, H = 1440, 810
-LENGTH = 31.0
+LENGTH = 40.0
 
 # 수치·이름 흐리게 — 화면 구성과 색은 그대로 보이게
 BLUR = r"""
@@ -113,12 +113,22 @@ def main():
             return x, y
 
         # 0~3초 — 제목
-        cap("세종 행복도시 상가공실 상황판", "집합상가 전수조사 · 생활권·동·건물 단위")
+        cap("세종 행복도시 상가공실 상황판", "상가 전수조사 · 생활권·동·건물 단위")
         pg.wait_for_timeout(1000)
         move(".kpi:nth-child(1)", click=False)
+        pg.wait_for_timeout(400)
+
+        # 조사 시점·대상 고르기 — 2023년 6월 ↔ 2025년 12월, 집합상가 · 아파트 상가
+        cap("조사 시점 고르기", "2023년 6월 · 2025년 12월 두 차례 조사")
+        move('#selbar [data-sg="yr"][data-sv="2023"]', steps=16)
+        pg.wait_for_timeout(1000)
+        move('#selbar [data-sg="yr"][data-sv="2025"]', steps=12)
+        pg.wait_for_timeout(700)
+        cap("대상 고르기", "집합상가 · 아파트 단지 내 상가 · 모두")
+        move('#selbar [data-sg="kind"][data-sv="apt"]', steps=14)
+        pg.wait_for_timeout(1000)
+        move('#selbar [data-sg="kind"][data-sv="mall"]', steps=12)
         pg.wait_for_timeout(500)
-        move(".kpi:nth-child(3)", steps=16, click=False)
-        pg.wait_for_timeout(300)
 
         # 3~7초 — 생활권·동별
         cap("어디가 비어 있나", "생활권·동별 공실률 — 누르면 지도로 이동")
@@ -131,7 +141,7 @@ def main():
 
         # 7~13초 — 2D 지도
         cap("공실 지도(2D)", "건물별 공실률 · 조건 거르기 · 핫스팟")
-        scroll_to("#map-sec", 900, 10)
+        scroll_to("#map-sec", 900, 10 + pg.evaluate("document.getElementById('selbar').offsetHeight"))
         pg.wait_for_timeout(400)
         move('#rail [data-f="new"]', steps=16)
         pg.wait_for_timeout(700)
@@ -146,12 +156,12 @@ def main():
         # 13~24초 — 3D 지도
         cap("3D 지도", "건물을 실제 높이로 — 조사 건물은 공실률 색")
         move('.v3-toggle button[data-v="3d"]', steps=16)
-        pg.wait_for_function("!!document.querySelector('#v3-map canvas') && !document.getElementById('v3-msg')", timeout=30000)
+        pg.wait_for_function("!!(window.__v3 && window.__v3.map.loaded() && window.__v3.map.getSource('v3-sv'))", timeout=60000)
         pg.wait_for_timeout(900)
         # 행복도시 전체는 3D 로 보기엔 멀다 — 동 막대를 누른 것처럼 나성동으로 날아간다(3D 조각이 막대 클릭을 받는다)
         pg.evaluate("""() => { const y = scrollY; document.querySelector('#dbars .br[data-k="나성동"]').click(); scrollTo(0, y); }""")
         pg.wait_for_timeout(100)
-        scroll_to("#map-sec", 300, 10)
+        scroll_to("#map-sec", 300, 10 + pg.evaluate("document.getElementById('selbar').offsetHeight"))
         pg.wait_for_timeout(1500)
         # 건물을 누르면 정보창 — 화면 안에 보이는 나성동 조사 건물 중 상가가 큰 것(항목 이름은 보이고 값은 흐림)
         cap("건물을 누르면", "공실률·상가 면적·용도·경과연수가 뜹니다")
@@ -174,7 +184,10 @@ def main():
         pg.wait_for_timeout(1800)
         cap("공실률 강조", "공실이 클수록 건물이 높이 솟습니다")
         move('#v3-rail [data-g="hmode"][data-v="vac"]', steps=16)
-        pg.wait_for_timeout(2000)
+        pg.wait_for_timeout(1700)
+        cap("아파트 단지 내 상가도 함께", "단지 안 상가동을 찾아 칠하고, 못 찾은 곳은 기둥으로")
+        move('#selbar [data-sg="kind"][data-sv="all"]', steps=16)
+        pg.wait_for_timeout(2200)
 
         # 24~31초 — 분석
         cap("왜 비는가", "회귀분석·머신러닝으로 본 공실 요인")
