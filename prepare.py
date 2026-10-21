@@ -36,9 +36,9 @@ NASUNG = (127.2600, 36.4870)          # 나성동 중심상업(어반아트리�
 
 
 def load_survey():
-    # 원인 분석은 「상황판 데이터_23,25_최종.xlsx」(data/raw/survey_2325.xlsx)의 2025.12 집합상가 시트.
+    # 원인 분석은 「상황판 데이터_10.21.xlsx」(data/raw/survey_1021.xlsx)의 2025.12 집합상가 시트.
     # 이 시트의 '비고'(2023/2025)는 조사연도가 아니라 처음 조사 목록에 든 해 → first 로 둔다. 조사 시점은 모두 2025년 12월.
-    src = os.path.join(RAW, "survey_2325.xlsx")
+    src = os.path.join(RAW, "survey_1021.xlsx")
     wb = openpyxl.load_workbook(src if os.path.exists(src) else os.path.join(RAW, "survey.xlsx"), read_only=True, data_only=True)
     ws = next((w for w in wb.worksheets if w.title.startswith("2025") and "집합" in w.title), wb.worksheets[0])
     out = []

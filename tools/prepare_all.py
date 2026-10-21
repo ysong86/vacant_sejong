@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 """조사 엑셀 네 시트(2023.06·2025.12 × 집합상가·아파트 상가) → data/survey_all.json
 
-  python tools/prepare_all.py        (원본: data/raw/survey_2325.xlsx = 「상황판 데이터_23,25_최종.xlsx」)
+  python tools/prepare_all.py        (원본: data/raw/survey_1021.xlsx = 「상황판 데이터_10.21.xlsx」)
+
+입력 오류 보정(2026-10-21): 공실_면적 ÷ 상가면적이 엑셀 '공실률_면적' 열과 0.5%p 넘게 다르면, 공실률 열을 따른다
+(이런 행은 모두 공실률 열이 호수 공실률과 맞는다) → 공실면적 = 상가면적 × 공실률 열. 보정 내역은 data/corrections.json.
+  · 2023.06 집합상가 보람동 시청 17동: 공실_면적 칸에 '상가면적 − 실제 공실'(영업 면적)이 들어가 있었다.
+  · 2025.12 아파트 상가 대평동 해들마을6단지: 상가면적·공실면적에 같은 2,418.7㎡가 더해져 공실면적이 부풀었다.
 
 기록 하나 = 한 조사 시점의 한 건물(집합상가) 또는 한 단지 상가(아파트 상가).
 - yr: "2023"(2023년 6월) / "2025"(2025년 12월),  kind: "mall"(집합상가) / "apt"(아파트 상가)
@@ -31,7 +36,9 @@ import prepare as PR          # noqa: E402  DONG_ZONE·DONG_UNIT·ZC(생활권 �
 import extra_features as EF   # noqa: E402  inside·dist·titles(표제부 API, 캐시)
 
 ZC = PR.ZC
-SRC = os.path.join(HERE, "data", "raw", "survey_2325.xlsx")
+SRC = os.path.join(HERE, "data", "raw", "survey_1021.xlsx")
+SHEETS = ("2023.06.집합상가", "2025.12.집합상가", "2023.06.아파트상가", "2025.12.아파트상가")   # 2026 공실밀집지역 시트는 아직 쓰지 않는다
+FIXES = []
 REF = {"2023": dt.date(2023, 6, 30), "2025": dt.date(2025, 12, 31)}
 
 
@@ -74,7 +81,7 @@ def age_of(apr, yr):
 
 def load():
     wb = openpyxl.load_workbook(SRC, read_only=True, data_only=True)
-    sheets = {ws.title: rows_of(ws) for ws in wb.worksheets}
+    sheets = {ws.title: rows_of(ws) for ws in wb.worksheets if ws.title in SHEETS}
     recs = []
     for title, rows in sheets.items():
         yr = "2023" if title.startswith("2023") else "2025"
@@ -96,6 +103,13 @@ def load():
             if not area:
                 continue
             dong = (r.get("동") or "").strip()
+            rc = num(r.get("공실률_면적"))
+            if rc is not None and vac is not None and abs(vac / area - rc) > 0.005:
+                FIXES.append({"sheet": title, "code": str(code).strip(), "name": str(name).strip(), "dong": dong,
+                              "sub": str(sub).strip(), "area": round(area, 1), "vac_before": round(vac, 1),
+                              "rate_before": round(vac / area * 100, 1), "rate_col": round(rc * 100, 1),
+                              "units_rate": round(vu / units * 100, 1) if units else None, "vac_after": round(area * rc, 1)})
+                vac = area * rc
             first = r.get("비고") if yr == "2025" and isinstance(r.get("비고"), (int, float)) else None
             recs.append({
                 "yr": yr, "kind": kind, "code": str(code).strip(), "name": str(name).replace("\xa0", " ").strip(),
@@ -192,6 +206,8 @@ def link_footprints(recs):
 
 def main():
     recs = load()
+    json.dump(FIXES, open(os.path.join(HERE, "data", "corrections.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    print("입력 오류 보정", len(FIXES), "행:", sorted({(f["sheet"], f["sub"]) for f in FIXES}))
     fail = geocode(recs)
     stat = link_footprints(recs)
     # 2025.12 집합상가에는 원인 분석(analysis.json)의 핫스팟 값 등을 붙인다(같은 건물·같은 값)
