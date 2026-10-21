@@ -656,7 +656,10 @@ def chg_desc(pairs, kind, where="행복도시 전체"):
         g[q[gk]].append((q, p))
     gs = sorted(((agg([q for q, _ in v])[0] - agg([p for _, p in v])[0], k) for k, v in g.items() if len(v) >= 2))
     if len(gs) >= 2:
-        s += f" {'동 세부' if gk == 'sub' else '동'} 기준 가장 크게 줄어든 곳 {gs[0][1]}({gs[0][0]:+.1f}%p), 가장 크게 늘어난 곳 {gs[-1][1]}({gs[-1][0]:+.1f}%p)."
+        lab = "동 세부" if gk == "sub" else "동"
+        lo_t = "가장 크게 줄어든 곳" if gs[0][0] < 0 else "가장 적게 늘어난 곳"
+        hi_t = "가장 크게 늘어난 곳" if gs[-1][0] > 0 else "가장 적게 줄어든 곳"
+        s += f" {lab} 기준 {lo_t} {gs[0][1]}({gs[0][0]:+.1f}%p), {hi_t} {gs[-1][1]}({gs[-1][0]:+.1f}%p)."
     return s
 
 
@@ -672,10 +675,9 @@ def hot_desc(recs, cls, kind, what="공실률"):
     hot = [r for r, c in zip(recs, cls) if c.startswith("hot")]
     cold = [r for r, c in zip(recs, cls) if c.startswith("cold")]
     s = (f"전체 {len(recs)}{unit} 중 {what} 핫스팟 {len(hot)}{unit}{where_txt(hot)}, 콜드스팟 {len(cold)}{unit}{where_txt(cold)}. ")
-    if hot:
-        s += f"핫스팟의 공실률(면적) {agg(hot)[0]:.1f}%, "
-    if cold:
-        s += f"콜드스팟 {agg(cold)[0]:.1f}%."
+    part = ([f"핫스팟의 공실률(면적) {agg(hot)[0]:.1f}%"] if hot else []) + ([f"콜드스팟 {agg(cold)[0]:.1f}%"] if cold else [])
+    if part:
+        s += ", ".join(part) + "."
     if len(recs) < 40:
         s += f" 대상이 {len(recs)}{unit}뿐이라 이웃 수가 적어 결과가 불안정하다 — 참고용."
     return s
@@ -711,6 +713,9 @@ def write_book(b, path):
         "**기호**: ● 집합상가 건물, ◆ 아파트 단지 내 상가(단지 대표 주소 위치). 크기 = 상가 면적 3단계. 조사 건물의 바닥 외곽선도 같은 색으로 칠했다"
         "(아파트 상가는 단지 필지의 낮은 근생동을 찾은 경우만).",
         "**왼쪽 위 꼬리표** = 범위 · 조사 시점 · 대상, **오른쪽 아래 상자** = 그 그림의 대상 수와 합계 공실률.",
+        "**입력 오류 보정(2026-10-21, 「상황판 데이터_10.21.xlsx」)**: 공실 면적 ÷ 상가 면적이 엑셀 공실률 열과 다른 18행은 호수 공실률과 맞는 공실률 열을 따랐다 — "
+        "2023.06 집합상가 보람동 시청 17동(공실 면적 칸에 영업 면적이 입력됨, 예: 89.8% → 10.2%), 2025.12 아파트 상가 대평동 해들마을6단지(61.8% → 43.1%). "
+        "2023.06 집합상가 전체 공실률은 33.7% → 28.1%, 보람동은 77.6% → 22.1%. 보람동 강변 10동은 면적·호수 공실률이 서로 맞아 그대로 두었다.",
         "그림 파일 원본은 docs/maps 폴더에 같은 이름의 PNG로 있다.",
     ], title="읽는 법")
     k = 0
